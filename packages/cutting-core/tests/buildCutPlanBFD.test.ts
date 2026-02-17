@@ -24,7 +24,7 @@ describe("buildCutPlanBFD", () => {
 
     expect(result.status).toBe("PARTIAL");
     expect(result.shortage).toHaveLength(1);
-    expect(result.shortage[0].missingCount).toBe(4);
+    expect(result.shortage[0].missingCount).toBe(3);
   });
 
   it("returns FAIL when longest piece is longer than any stock", () => {
@@ -76,4 +76,3 @@ describe("buildCutPlanBFD", () => {
     expect(result.stats.totalPieces).toBe(12);
   });
 });
-

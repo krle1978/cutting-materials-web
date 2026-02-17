@@ -11,4 +11,4 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 _pdf_extracted.txt
-
+*.tsbuildinfo

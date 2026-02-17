@@ -1,10 +1,29 @@
-import {
-  DEFAULT_PLAN_PARAMS,
-  type InventoryItem,
-  type PlanParams,
-  type PlanStatus,
-  type ShortageReason
-} from "@cutting/contracts";
+const DEFAULT_PLAN_PARAMS = {
+  kerfMm: 3,
+  allowanceMm: 1,
+  minRemnantMm: 100,
+  toleranceMm: 1
+} as const;
+
+export type InventoryItem = {
+  id: number;
+  lengthMm: number;
+  qty: number;
+};
+
+export type PlanParams = {
+  kerfMm: number;
+  allowanceMm: number;
+  minRemnantMm: number;
+  toleranceMm: number;
+};
+
+export type PlanStatus = "SUCCESS" | "PARTIAL" | "FAIL";
+
+export type ShortageReason =
+  | "NO_STOCK_LONG_ENOUGH"
+  | "KERF_ALLOWANCE_MAKES_IT_IMPOSSIBLE"
+  | "INSUFFICIENT_STOCK_AFTER_ALLOCATION";
 
 export type OrderLineMm = {
   heightMm: number;
@@ -263,4 +282,3 @@ function countOf(values: number[], target: number): number {
   }
   return count;
 }
-
