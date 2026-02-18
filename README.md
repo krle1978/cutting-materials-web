@@ -65,7 +65,7 @@ Alternativa: koristi `infra/render.yaml` kao Blueprint.
 
 ## API Endpoints
 
-- `GET /health`
+- `GET /materials`
 - `GET /inventory`
 - `POST /inventory/add`
 - `POST /orders/plan`

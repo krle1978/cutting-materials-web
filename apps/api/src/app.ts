@@ -28,7 +28,7 @@ export async function buildApp(options: BuildAppOptions) {
     }
   });
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/materials", async () => ({ ok: true }));
   await registerInventoryRoutes(app, { store: options.store });
   await registerOrdersRoutes(app, { store: options.store });
 
