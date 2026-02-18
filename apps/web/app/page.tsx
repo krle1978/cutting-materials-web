@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 type InventoryItem = {
   id: number;
+  inventoryClass: "Komarnici" | "Prozorske daske";
   lengthMm: number;
   qty: number;
 };
@@ -40,8 +41,9 @@ export default function HomePage() {
   const apiUrl = useMemo(() => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000", []);
 
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [inventoryLengthMm, setInventoryLengthMm] = useState("3000");
-  const [inventoryQty, setInventoryQty] = useState("10");
+  const [inventoryClass, setInventoryClass] = useState<"Komarnici" | "Prozorske daske">("Komarnici");
+  const [inventoryLengthMm, setInventoryLengthMm] = useState("");
+  const [inventoryQty, setInventoryQty] = useState("");
 
   const [units, setUnits] = useState<"mm" | "cm" | "m">("mm");
   const [kerfMm, setKerfMm] = useState("3");
@@ -52,6 +54,12 @@ export default function HomePage() {
   const [planResponse, setPlanResponse] = useState<PlanResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const filteredInventory = useMemo(() => {
+    return inventory
+      .filter((item) => item.inventoryClass === inventoryClass)
+      .sort((a, b) => a.lengthMm - b.lengthMm);
+  }, [inventory, inventoryClass]);
 
   const loadInventory = useCallback(async () => {
     const response = await fetch(`${apiUrl}/inventory`);
@@ -68,6 +76,14 @@ export default function HomePage() {
 
   async function onAddInventory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const lengthMm = Number(inventoryLengthMm);
+    const qty = Number(inventoryQty);
+
+    if (!Number.isInteger(lengthMm) || lengthMm < 1 || !Number.isInteger(qty) || qty < 1) {
+      setError("Unesi validan Length i Qty (celi brojevi > 0).");
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
@@ -75,8 +91,9 @@ export default function HomePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lengthMm: Number(inventoryLengthMm),
-          qty: Number(inventoryQty)
+          inventoryClass,
+          lengthMm,
+          qty
         })
       });
       if (!response.ok) {
@@ -84,6 +101,8 @@ export default function HomePage() {
         throw new Error(`Inventory add failed: ${body}`);
       }
       await loadInventory();
+      setInventoryLengthMm("");
+      setInventoryQty("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
     } finally {
@@ -150,7 +169,7 @@ export default function HomePage() {
     <main className="page">
       <header className="hero">
         <p className="eyebrow">Cutting Optimizer</p>
-        <h1>Plan i commit sečenja letvica</h1>
+        <h1>Cutting Materials</h1>
         <p className="sub">
           Frontend na Vercelu, backend na Renderu, zajednički monorepo i BFD algoritam za minimizaciju otpada.
         </p>
@@ -160,34 +179,70 @@ export default function HomePage() {
         <h2>Inventory</h2>
         <form onSubmit={onAddInventory} className="grid">
           <label>
-            Length (mm)
-            <input
-              type="number"
-              min={1}
-              value={inventoryLengthMm}
-              onChange={(event) => setInventoryLengthMm(event.target.value)}
-            />
+            Klasa
+            <select
+              value={inventoryClass}
+              onChange={(event) => setInventoryClass(event.target.value as "Komarnici" | "Prozorske daske")}
+            >
+              <option value="Komarnici">Komarnici</option>
+              <option value="Prozorske daske">Prozorske daske</option>
+            </select>
           </label>
-          <label>
-            Qty
-            <input
-              type="number"
-              min={1}
-              value={inventoryQty}
-              onChange={(event) => setInventoryQty(event.target.value)}
-            />
-          </label>
-          <button type="submit" disabled={busy}>
-            Dodaj
-          </button>
-        </form>
-        <div className="inventory-list">
-          {inventory.map((item) => (
-            <div className="inventory-item" key={item.id}>
-              <span>{item.lengthMm} mm</span>
-              <strong>x{item.qty}</strong>
+          <details className="inventory-collapsible">
+            <summary>Dodaj novu stavku</summary>
+            <div className="inventory-collapsible-content">
+              <label className="compact-field">
+                Length (mm)
+                <input
+                  className="compact-input"
+                  type="number"
+                  min={1}
+                  required
+                  placeholder="npr. 3000"
+                  value={inventoryLengthMm}
+                  onChange={(event) => setInventoryLengthMm(event.target.value)}
+                />
+              </label>
+              <label className="compact-field">
+                Qty
+                <input
+                  className="compact-input"
+                  type="number"
+                  min={1}
+                  required
+                  placeholder="npr. 5"
+                  value={inventoryQty}
+                  onChange={(event) => setInventoryQty(event.target.value)}
+                />
+              </label>
+              <button type="submit" disabled={busy}>
+                Dodaj
+              </button>
             </div>
-          ))}
+          </details>
+        </form>
+        <div className="inventory-table-wrap">
+          <p className="inventory-table-title">Prikaz klase: {inventoryClass}</p>
+          {filteredInventory.length === 0 ? (
+            <p className="inventory-empty">Nema unosa za izabranu klasu.</p>
+          ) : (
+            <table className="inventory-table">
+              <thead>
+                <tr>
+                  <th>Length (mm)</th>
+                  <th>Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredInventory.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.lengthMm}</td>
+                    <td>{item.qty}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 
@@ -259,4 +314,3 @@ export default function HomePage() {
     </main>
   );
 }
-

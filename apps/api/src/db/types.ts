@@ -1,4 +1,4 @@
-import type { InventoryItem, PlanParams } from "@cutting/contracts";
+import type { InventoryClass, InventoryItem, PlanParams } from "@cutting/contracts";
 import type { CutPlanResult, OrderLineMm } from "@cutting/cutting-core";
 
 export type PlanState = "PLANNED" | "COMMITTED" | "EXPIRED";
@@ -16,9 +16,8 @@ export type CommitPlanResult = {
 export interface PlanStore {
   migrate(): Promise<void>;
   listInventory(): Promise<InventoryItem[]>;
-  addInventory(lengthMm: number, qty: number): Promise<void>;
+  addInventory(lengthMm: number, qty: number, inventoryClass: InventoryClass): Promise<void>;
   createPlan(input: CreatePlanInput): Promise<{ planId: string }>;
   commitPlan(planId: string): Promise<CommitPlanResult>;
   close(): Promise<void>;
 }
-

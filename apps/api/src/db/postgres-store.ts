@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
-import type { InventoryItem } from "@cutting/contracts";
+import type { InventoryClass, InventoryItem } from "@cutting/contracts";
 import type { Allocation, CutPlanResult } from "@cutting/cutting-core";
 import { ConflictError, NotFoundError } from "../utils/errors";
 import { migrationStatements } from "./sql";
@@ -26,31 +26,33 @@ export class PostgresStore implements PlanStore {
   async listInventory(): Promise<InventoryItem[]> {
     const { rows } = await this.pool.query<{
       id: number;
+      inventory_class: InventoryClass;
       length_mm: number;
       qty: number;
     }>(`
-      SELECT id, length_mm, qty
+      SELECT id, inventory_class, length_mm, qty
       FROM inventory
       WHERE qty > 0
-      ORDER BY length_mm ASC
+      ORDER BY inventory_class ASC, length_mm ASC
     `);
 
     return rows.map((row) => ({
       id: row.id,
+      inventoryClass: row.inventory_class,
       lengthMm: row.length_mm,
       qty: row.qty
     }));
   }
 
-  async addInventory(lengthMm: number, qty: number): Promise<void> {
+  async addInventory(lengthMm: number, qty: number, inventoryClass: InventoryClass): Promise<void> {
     await this.pool.query(
       `
-        INSERT INTO inventory (length_mm, qty)
-        VALUES ($1, $2)
-        ON CONFLICT (length_mm)
+        INSERT INTO inventory (inventory_class, length_mm, qty)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (inventory_class, length_mm)
         DO UPDATE SET qty = inventory.qty + EXCLUDED.qty
       `,
-      [lengthMm, qty]
+      [inventoryClass, lengthMm, qty]
     );
   }
 
@@ -97,14 +99,15 @@ export class PostgresStore implements PlanStore {
 
       const result = plan.rows[0].result_json;
       const consumptionBySource = summarizeConsumption(result.allocations);
-      const remnantByLength = summarizeRemnants(result.allocations);
+      const sourceClassById = new Map<number, InventoryClass>();
 
       for (const [sourceId, usedCount] of consumptionBySource.entries()) {
-        const updated = await client.query(
+        const updated = await client.query<{ inventory_class: InventoryClass }>(
           `
             UPDATE inventory
             SET qty = qty - $2
             WHERE id = $1 AND qty >= $2
+            RETURNING inventory_class
           `,
           [sourceId, usedCount]
         );
@@ -112,17 +115,20 @@ export class PostgresStore implements PlanStore {
         if (updated.rowCount === 0) {
           throw new ConflictError("Inventory changed, plan cannot be committed");
         }
+
+        sourceClassById.set(sourceId, updated.rows[0].inventory_class);
       }
 
-      for (const [lengthMm, qty] of remnantByLength.entries()) {
+      const remnantByClassAndLength = summarizeRemnants(result.allocations, sourceClassById);
+      for (const remnant of remnantByClassAndLength.values()) {
         await client.query(
           `
-            INSERT INTO inventory (length_mm, qty)
-            VALUES ($1, $2)
-            ON CONFLICT (length_mm)
+            INSERT INTO inventory (inventory_class, length_mm, qty)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (inventory_class, length_mm)
             DO UPDATE SET qty = inventory.qty + EXCLUDED.qty
           `,
-          [lengthMm, qty]
+          [remnant.inventoryClass, remnant.lengthMm, remnant.qty]
         );
       }
 
@@ -154,14 +160,36 @@ function summarizeConsumption(allocations: Allocation[]): Map<number, number> {
   return map;
 }
 
-function summarizeRemnants(allocations: Allocation[]): Map<number, number> {
-  const map = new Map<number, number>();
+function summarizeRemnants(
+  allocations: Allocation[],
+  sourceClassById: Map<number, InventoryClass>
+): Map<string, { inventoryClass: InventoryClass; lengthMm: number; qty: number }> {
+  const map = new Map<string, { inventoryClass: InventoryClass; lengthMm: number; qty: number }>();
   for (const allocation of allocations) {
     if (!allocation.remnantKept) {
       continue;
     }
-    map.set(allocation.remnantMm, (map.get(allocation.remnantMm) ?? 0) + 1);
+
+    const inventoryClass = sourceClassById.get(allocation.stock.sourceId);
+    if (!inventoryClass) {
+      throw new ConflictError("Inventory changed, plan cannot be committed");
+    }
+
+    const key = toInventoryKey(allocation.remnantMm, inventoryClass);
+    const existing = map.get(key);
+    if (existing) {
+      existing.qty += 1;
+      continue;
+    }
+    map.set(key, {
+      inventoryClass,
+      lengthMm: allocation.remnantMm,
+      qty: 1
+    });
   }
   return map;
 }
 
+function toInventoryKey(lengthMm: number, inventoryClass: InventoryClass): string {
+  return `${inventoryClass}:${lengthMm}`;
+}

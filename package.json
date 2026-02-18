@@ -10,12 +10,15 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "concurrently -n api,web -c green,blue \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run dev --workspace @cutting/api",
     "dev:web": "npm run dev --workspace @cutting/web",
     "build": "npm run build --workspace @cutting/contracts && npm run build --workspace @cutting/cutting-core && npm run build --workspace @cutting/api && npm run build --workspace @cutting/web",
     "typecheck": "npm run typecheck --workspace @cutting/contracts && npm run typecheck --workspace @cutting/cutting-core && npm run typecheck --workspace @cutting/api && npm run typecheck --workspace @cutting/web",
     "test": "npm run test --workspace @cutting/cutting-core",
     "start:api": "npm run start --workspace @cutting/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }
-

@@ -26,8 +26,7 @@ export async function registerInventoryRoutes(
       };
     }
 
-    await options.store.addInventory(parsed.data.lengthMm, parsed.data.qty);
+    await options.store.addInventory(parsed.data.lengthMm, parsed.data.qty, parsed.data.inventoryClass);
     return { ok: true };
   });
 }
-

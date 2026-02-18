@@ -26,14 +26,19 @@ export const planParamsPatchSchema = z.object({
 });
 export type PlanParamsPatch = z.infer<typeof planParamsPatchSchema>;
 
+export const inventoryClassSchema = z.enum(["Komarnici", "Prozorske daske"]);
+export type InventoryClass = z.infer<typeof inventoryClassSchema>;
+
 export const inventoryItemSchema = z.object({
   id: z.number().int().positive(),
+  inventoryClass: inventoryClassSchema,
   lengthMm: z.number().int().positive(),
   qty: z.number().int().min(0)
 });
 export type InventoryItem = z.infer<typeof inventoryItemSchema>;
 
 export const inventoryAddRequestSchema = z.object({
+  inventoryClass: inventoryClassSchema,
   lengthMm: z.number().int().positive(),
   qty: z.number().int().positive()
 });
@@ -76,4 +81,3 @@ export function mergePlanParams(patch?: PlanParamsPatch): PlanParams {
     toleranceMm: patch?.toleranceMm ?? DEFAULT_PLAN_PARAMS.toleranceMm
   };
 }
-
