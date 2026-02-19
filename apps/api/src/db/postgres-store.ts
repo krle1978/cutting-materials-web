@@ -4,7 +4,13 @@ import type { InventoryClass, InventoryItem } from "@cutting/contracts";
 import type { Allocation, CutPlanResult } from "@cutting/cutting-core";
 import { ConflictError, NotFoundError } from "../utils/errors";
 import { migrationStatements } from "./sql";
-import type { CommitPlanResult, CreatePlanInput, PlanStore } from "./types";
+import type {
+  CommitPlanResult,
+  CreateOrderInput,
+  CreatePlanInput,
+  OrderQueueItem,
+  PlanStore
+} from "./types";
 
 export class PostgresStore implements PlanStore {
   private readonly pool: Pool;
@@ -150,7 +156,158 @@ export class PostgresStore implements PlanStore {
       client.release();
     }
   }
+
+  async createOrders(input: CreateOrderInput[]): Promise<OrderQueueItem[]> {
+    const created: OrderQueueItem[] = [];
+
+    for (const entry of input) {
+      const orderId = randomUUID();
+      const { rows } = await this.pool.query<OrderRow>(
+        `
+          INSERT INTO order_entries (
+            id,
+            inventory_class,
+            height_mm,
+            width_mm,
+            qty,
+            width_only,
+            derived_from_width,
+            status,
+            accepted_plan_ids
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', '[]'::jsonb)
+          RETURNING
+            id,
+            inventory_class,
+            height_mm,
+            width_mm,
+            qty,
+            width_only,
+            derived_from_width,
+            status,
+            created_at,
+            accepted_at,
+            accepted_plan_ids
+        `,
+        [
+          orderId,
+          entry.inventoryClass,
+          entry.heightMm,
+          entry.widthMm,
+          entry.qty,
+          entry.widthOnly,
+          entry.derivedFromWidth
+        ]
+      );
+      created.push(mapOrderRow(rows[0]));
+    }
+
+    return created;
+  }
+
+  async listOrders(): Promise<OrderQueueItem[]> {
+    const { rows } = await this.pool.query<OrderRow>(`
+      SELECT
+        id,
+        inventory_class,
+        height_mm,
+        width_mm,
+        qty,
+        width_only,
+        derived_from_width,
+        status,
+        created_at,
+        accepted_at,
+        accepted_plan_ids
+      FROM order_entries
+      ORDER BY created_at DESC, id DESC
+    `);
+
+    return rows.map(mapOrderRow);
+  }
+
+  async getOrderById(orderId: string): Promise<OrderQueueItem | null> {
+    const { rows } = await this.pool.query<OrderRow>(
+      `
+      SELECT
+        id,
+        inventory_class,
+        height_mm,
+        width_mm,
+        qty,
+        width_only,
+        derived_from_width,
+        status,
+        created_at,
+        accepted_at,
+        accepted_plan_ids
+      FROM order_entries
+      WHERE id = $1
+    `,
+      [orderId]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return mapOrderRow(rows[0]);
+  }
+
+  async markOrderAccepted(orderId: string, acceptedPlanIds: string[]): Promise<OrderQueueItem> {
+    const existing = await this.getOrderById(orderId);
+    if (!existing) {
+      throw new NotFoundError("Order not found");
+    }
+
+    if (existing.status === "ACCEPTED") {
+      return existing;
+    }
+
+    const { rows } = await this.pool.query<OrderRow>(
+      `
+      UPDATE order_entries
+      SET status = 'ACCEPTED',
+          accepted_at = NOW(),
+          accepted_plan_ids = $2::jsonb
+      WHERE id = $1
+      RETURNING
+        id,
+        inventory_class,
+        height_mm,
+        width_mm,
+        qty,
+        width_only,
+        derived_from_width,
+        status,
+        created_at,
+        accepted_at,
+        accepted_plan_ids
+    `,
+      [orderId, JSON.stringify(acceptedPlanIds)]
+    );
+
+    if (rows.length === 0) {
+      throw new NotFoundError("Order not found");
+    }
+
+    return mapOrderRow(rows[0]);
+  }
 }
+
+type OrderRow = {
+  id: string;
+  inventory_class: InventoryClass;
+  height_mm: number | null;
+  width_mm: number;
+  qty: number;
+  width_only: boolean;
+  derived_from_width: boolean;
+  status: "PENDING" | "ACCEPTED";
+  created_at: Date | string;
+  accepted_at: Date | string | null;
+  accepted_plan_ids: unknown;
+};
 
 function summarizeConsumption(allocations: Allocation[]): Map<number, number> {
   const map = new Map<number, number>();
@@ -192,4 +349,30 @@ function summarizeRemnants(
 
 function toInventoryKey(lengthMm: number, inventoryClass: InventoryClass): string {
   return `${inventoryClass}:${lengthMm}`;
+}
+
+function mapOrderRow(row: OrderRow): OrderQueueItem {
+  return {
+    id: row.id,
+    inventoryClass: row.inventory_class,
+    heightMm: row.height_mm,
+    widthMm: row.width_mm,
+    qty: row.qty,
+    widthOnly: row.width_only,
+    derivedFromWidth: row.derived_from_width,
+    status: row.status,
+    createdAt: toIsoString(row.created_at),
+    acceptedAt: row.accepted_at ? toIsoString(row.accepted_at) : null,
+    acceptedPlanIds: Array.isArray(row.accepted_plan_ids)
+      ? row.accepted_plan_ids.filter((x): x is string => typeof x === "string")
+      : []
+  };
+}
+
+function toIsoString(value: Date | string): string {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }

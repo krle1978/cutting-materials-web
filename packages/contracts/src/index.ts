@@ -63,6 +63,25 @@ export const orderCommitRequestSchema = z.object({
 });
 export type OrderCommitRequest = z.infer<typeof orderCommitRequestSchema>;
 
+export const orderQueueRowSchema = z.object({
+  inventoryClass: inventoryClassSchema,
+  height: z.number().positive().nullable().optional(),
+  width: z.number().positive(),
+  qty: z.number().int().positive(),
+  widthOnly: z.boolean().default(false),
+  derivedFromWidth: z.boolean().default(false)
+});
+export type OrderQueueRow = z.infer<typeof orderQueueRowSchema>;
+
+export const orderQueueCreateRequestSchema = z.object({
+  units: unitsSchema.default("mm"),
+  rows: z.array(orderQueueRowSchema).min(1)
+});
+export type OrderQueueCreateRequest = z.infer<typeof orderQueueCreateRequestSchema>;
+
+export const orderQueueStatusSchema = z.enum(["PENDING", "ACCEPTED"]);
+export type OrderQueueStatus = z.infer<typeof orderQueueStatusSchema>;
+
 export const planStatusSchema = z.enum(["SUCCESS", "PARTIAL", "FAIL"]);
 export type PlanStatus = z.infer<typeof planStatusSchema>;
 

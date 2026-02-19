@@ -72,9 +72,43 @@ h1 {
   margin-top: 0;
 }
 
+.panel-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.panel-tab {
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  max-width: none;
+}
+
+.panel-tab.active {
+  background: linear-gradient(135deg, var(--accent-2), #2b7e64);
+  color: #fff;
+}
+
 .grid {
   display: grid;
   gap: 0.75rem;
+}
+
+.order-grid {
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  align-items: end;
+}
+
+.order-grid .short-field,
+.order-grid .short-input {
+  max-width: none;
+}
+
+.order-grid .checkbox-inline,
+.order-grid .order-actions,
+.order-grid .order-table-wrap {
+  grid-column: 1 / -1;
 }
 
 .inventory-collapsible {
@@ -95,12 +129,19 @@ h1 {
   gap: 0.65rem;
 }
 
-.compact-field {
-  max-width: 220px;
+.inventory-action-row {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
 }
 
-.compact-input {
-  max-width: 220px;
+.short-field {
+  max-width: 160px;
+}
+
+.short-input {
+  max-width: 160px;
+  width: 100%;
 }
 
 label {
@@ -140,8 +181,53 @@ button:disabled {
   grid-column: 1 / -1;
 }
 
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+}
+
+.checkbox-inline input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.order-actions {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.order-table-wrap {
+  margin-top: 0.2rem;
+}
+
+.order-submit-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.6rem;
+}
+
+.result-item + .result-item {
+  margin-top: 1rem;
+}
+
 .inventory-table-wrap {
   margin-top: 1rem;
+}
+
+.orders-history {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.orders-filters {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
 }
 
 .inventory-table-title {

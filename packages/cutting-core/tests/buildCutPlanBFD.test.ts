@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCutPlanBFD } from "../src/index";
+import { buildCutPlanBFD, buildCutPlanBFDForPieces } from "../src/index";
 
 describe("buildCutPlanBFD", () => {
   it("returns SUCCESS when inventory can fulfill all pieces", () => {
@@ -74,5 +74,17 @@ describe("buildCutPlanBFD", () => {
     expect(result.status).toBe("SUCCESS");
     expect(result.shortage).toHaveLength(0);
     expect(result.stats.totalPieces).toBe(12);
+  });
+
+  it("supports direct piece planning for width-only workflows", () => {
+    const result = buildCutPlanBFDForPieces({
+      inventoryItems: [{ id: 1, lengthMm: 5000, qty: 1 }],
+      piecesMm: [1200, 1200],
+      params: { kerfMm: 0, allowanceMm: 0, minRemnantMm: 100 }
+    });
+
+    expect(result.status).toBe("SUCCESS");
+    expect(result.shortage).toHaveLength(0);
+    expect(result.stats.totalPieces).toBe(2);
   });
 });

@@ -78,6 +78,12 @@ export type BuildCutPlanInput = {
   params?: Partial<PlanParams>;
 };
 
+export type BuildCutPlanForPiecesInput = {
+  inventoryItems: InventoryItem[];
+  piecesMm: number[];
+  params?: Partial<PlanParams>;
+};
+
 type MutableBar = {
   sourceId: number;
   originalMm: number;
@@ -90,16 +96,30 @@ export function buildCutPlanBFD({
   orderLines,
   params
 }: BuildCutPlanInput): CutPlanResult {
-  const normalizedParams = {
-    kerfMm: params?.kerfMm ?? DEFAULT_PLAN_PARAMS.kerfMm,
-    allowanceMm: params?.allowanceMm ?? DEFAULT_PLAN_PARAMS.allowanceMm,
-    minRemnantMm: params?.minRemnantMm ?? DEFAULT_PLAN_PARAMS.minRemnantMm,
-    toleranceMm: params?.toleranceMm ?? DEFAULT_PLAN_PARAMS.toleranceMm
-  };
+  return buildCutPlanBFDForPieces({
+    inventoryItems,
+    piecesMm: expandOrderToPieces(orderLines),
+    params
+  });
+}
 
-  const pieces = expandOrderToPieces(orderLines);
+export function buildCutPlanBFDForPieces({
+  inventoryItems,
+  piecesMm,
+  params
+}: BuildCutPlanForPiecesInput): CutPlanResult {
+  const normalizedParams = normalizePlanParams(params);
+  const pieces = piecesMm.map((piece) => toNonNegativeInt(piece)).filter((piece) => piece > 0);
   pieces.sort((a, b) => b - a);
 
+  return buildPlanFromPieces(inventoryItems, pieces, normalizedParams);
+}
+
+function buildPlanFromPieces(
+  inventoryItems: InventoryItem[],
+  pieces: number[],
+  normalizedParams: PlanParams
+): CutPlanResult {
   if (pieces.length === 0) {
     return {
       status: "SUCCESS",
@@ -216,6 +236,15 @@ export function buildCutPlanBFD({
       totalUsedStocks: allocations.length,
       totalWasteMm
     }
+  };
+}
+
+function normalizePlanParams(params?: Partial<PlanParams>): PlanParams {
+  return {
+    kerfMm: params?.kerfMm ?? DEFAULT_PLAN_PARAMS.kerfMm,
+    allowanceMm: params?.allowanceMm ?? DEFAULT_PLAN_PARAMS.allowanceMm,
+    minRemnantMm: params?.minRemnantMm ?? DEFAULT_PLAN_PARAMS.minRemnantMm,
+    toleranceMm: params?.toleranceMm ?? DEFAULT_PLAN_PARAMS.toleranceMm
   };
 }
 

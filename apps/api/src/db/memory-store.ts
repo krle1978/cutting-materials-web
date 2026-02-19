@@ -7,7 +7,10 @@ import type { Allocation } from "@cutting/cutting-core";
 import { ConflictError, NotFoundError } from "../utils/errors";
 import type {
   CommitPlanResult,
+  CreateOrderInput,
   CreatePlanInput,
+  OrderQueueItem,
+  OrderQueueStatus,
   PlanState,
   PlanStore
 } from "./types";
@@ -33,6 +36,19 @@ type PersistedMemoryState = {
     lengthMm: number;
     qty: number;
   }>;
+  orders?: Array<{
+    id?: unknown;
+    inventoryClass?: unknown;
+    heightMm?: unknown;
+    widthMm?: unknown;
+    qty?: unknown;
+    widthOnly?: unknown;
+    derivedFromWidth?: unknown;
+    status?: unknown;
+    createdAt?: unknown;
+    acceptedAt?: unknown;
+    acceptedPlanIds?: unknown;
+  }>;
   nextInventoryId: number;
 };
 
@@ -40,6 +56,7 @@ export class MemoryStore implements PlanStore {
   private inventoryById = new Map<number, InventoryItem>();
   private inventoryKeyIndex = new Map<string, number>();
   private plans = new Map<string, MemoryPlan>();
+  private orders = new Map<string, OrderQueueItem>();
   private nextInventoryId = 1;
   private readonly stateFilePath = resolveMemoryStateFilePath();
 
@@ -78,6 +95,62 @@ export class MemoryStore implements PlanStore {
     inventoryClass: InventoryClass = DEFAULT_INVENTORY_CLASS
   ): Promise<void> {
     await this.addInventoryInternal(lengthMm, qty, inventoryClass, true);
+  }
+
+  async createOrders(input: CreateOrderInput[]): Promise<OrderQueueItem[]> {
+    const createdAt = new Date().toISOString();
+    const created: OrderQueueItem[] = input.map((entry) => ({
+      id: randomUUID(),
+      inventoryClass: normalizeInventoryClass(entry.inventoryClass),
+      heightMm: toNullablePositiveInt(entry.heightMm),
+      widthMm: toPositiveInt(entry.widthMm),
+      qty: toPositiveInt(entry.qty),
+      widthOnly: entry.widthOnly === true,
+      derivedFromWidth: entry.derivedFromWidth === true,
+      status: "PENDING",
+      createdAt,
+      acceptedAt: null,
+      acceptedPlanIds: []
+    }));
+
+    for (const order of created) {
+      this.orders.set(order.id, order);
+    }
+
+    await this.persistState();
+    return created.map(cloneOrder);
+  }
+
+  async listOrders(): Promise<OrderQueueItem[]> {
+    return [...this.orders.values()]
+      .sort((a, b) => {
+        if (a.createdAt === b.createdAt) {
+          return a.id.localeCompare(b.id);
+        }
+        return b.createdAt.localeCompare(a.createdAt);
+      })
+      .map(cloneOrder);
+  }
+
+  async getOrderById(orderId: string): Promise<OrderQueueItem | null> {
+    const order = this.orders.get(orderId);
+    return order ? cloneOrder(order) : null;
+  }
+
+  async markOrderAccepted(orderId: string, acceptedPlanIds: string[]): Promise<OrderQueueItem> {
+    const order = this.orders.get(orderId);
+    if (!order) {
+      throw new NotFoundError("Order not found");
+    }
+
+    if (order.status !== "ACCEPTED") {
+      order.status = "ACCEPTED";
+      order.acceptedAt = new Date().toISOString();
+      order.acceptedPlanIds = [...acceptedPlanIds];
+      await this.persistState();
+    }
+
+    return cloneOrder(order);
   }
 
   private async addInventoryInternal(
@@ -196,6 +269,7 @@ export class MemoryStore implements PlanStore {
 
     this.inventoryById.clear();
     this.inventoryKeyIndex.clear();
+    this.orders.clear();
 
     let maxId = 0;
     for (const item of parsed.inventory ?? []) {
@@ -216,6 +290,37 @@ export class MemoryStore implements PlanStore {
       maxId = Math.max(maxId, id);
     }
 
+    for (const item of parsed.orders ?? []) {
+      if (typeof item.id !== "string" || item.id.length === 0) {
+        continue;
+      }
+      const widthMm = toPositiveInt(toNumber(item.widthMm));
+      const qty = toPositiveInt(toNumber(item.qty));
+      if (widthMm <= 0 || qty <= 0) {
+        continue;
+      }
+
+      const inventoryClass = normalizeInventoryClass(item.inventoryClass);
+      const order: OrderQueueItem = {
+        id: item.id,
+        inventoryClass,
+        heightMm: toNullablePositiveInt(item.heightMm),
+        widthMm,
+        qty,
+        widthOnly: item.widthOnly === true,
+        derivedFromWidth: item.derivedFromWidth === true,
+        status: normalizeOrderStatus(item.status),
+        createdAt: typeof item.createdAt === "string" && item.createdAt.length > 0 ? item.createdAt : new Date().toISOString(),
+        acceptedAt:
+          typeof item.acceptedAt === "string" && item.acceptedAt.length > 0 ? item.acceptedAt : null,
+        acceptedPlanIds: Array.isArray(item.acceptedPlanIds)
+          ? item.acceptedPlanIds.filter((x): x is string => typeof x === "string")
+          : []
+      };
+
+      this.orders.set(order.id, order);
+    }
+
     this.repairLegacyInventory();
     this.nextInventoryId = Math.max(toPositiveInt(parsed.nextInventoryId), maxId + 1);
   }
@@ -223,6 +328,7 @@ export class MemoryStore implements PlanStore {
   private async persistState(): Promise<void> {
     const state: PersistedMemoryState = {
       inventory: [...this.inventoryById.values()],
+      orders: [...this.orders.values()],
       nextInventoryId: this.nextInventoryId
     };
 
@@ -276,6 +382,10 @@ function normalizeInventoryClass(value: unknown): InventoryClass {
   return DEFAULT_INVENTORY_CLASS;
 }
 
+function normalizeOrderStatus(value: unknown): OrderQueueStatus {
+  return value === "ACCEPTED" ? "ACCEPTED" : "PENDING";
+}
+
 function toPositiveInt(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -283,11 +393,27 @@ function toPositiveInt(value: number): number {
   return Math.max(0, Math.round(value));
 }
 
+function toNullablePositiveInt(value: unknown): number | null {
+  const parsed = toPositiveInt(toNumber(value));
+  return parsed > 0 ? parsed : null;
+}
+
 function toNonNegativeInt(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
   }
   return Math.max(0, Math.round(value));
+}
+
+function toNumber(value: unknown): number {
+  return typeof value === "number" ? value : Number.NaN;
+}
+
+function cloneOrder(order: OrderQueueItem): OrderQueueItem {
+  return {
+    ...order,
+    acceptedPlanIds: [...order.acceptedPlanIds]
+  };
 }
 
 function resolveMemoryStateFilePath(): string {

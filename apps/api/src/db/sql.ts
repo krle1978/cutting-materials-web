@@ -73,5 +73,24 @@ export const migrationStatements = [
   `
     CREATE INDEX IF NOT EXISTS inventory_class_length_mm_idx
     ON inventory (inventory_class, length_mm);
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS order_entries (
+      id UUID PRIMARY KEY,
+      inventory_class TEXT NOT NULL CHECK (inventory_class IN ('Komarnici', 'Prozorske daske')),
+      height_mm INTEGER NULL CHECK (height_mm > 0),
+      width_mm INTEGER NOT NULL CHECK (width_mm > 0),
+      qty INTEGER NOT NULL CHECK (qty > 0),
+      width_only BOOLEAN NOT NULL DEFAULT FALSE,
+      derived_from_width BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL CHECK (status IN ('PENDING', 'ACCEPTED')),
+      accepted_plan_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      accepted_at TIMESTAMPTZ NULL
+    );
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS order_entries_status_created_idx
+    ON order_entries (status, created_at DESC);
   `
 ];

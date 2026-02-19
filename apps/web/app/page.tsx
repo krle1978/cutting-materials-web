@@ -1,10 +1,12 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+type InventoryClass = "Komarnici" | "Prozorske daske";
 
 type InventoryItem = {
   id: number;
-  inventoryClass: "Komarnici" | "Prozorske daske";
+  inventoryClass: InventoryClass;
   lengthMm: number;
   qty: number;
 };
@@ -28,38 +30,89 @@ type PlanResponse = {
   };
 };
 
-const DEFAULT_ORDER_JSON = JSON.stringify(
-  [
-    { height: 2000, width: 3000, qty: 5 },
-    { height: 1800, width: 2500, qty: 3 }
-  ],
-  null,
-  2
-);
+type OrderTableRow = {
+  id: number;
+  inventoryClass: InventoryClass;
+  heightMm: number | null;
+  widthMm: number;
+  qty: number;
+  derivedFromWidth: boolean;
+  parentRowId?: number;
+};
+
+type PersistedOrder = {
+  id: string;
+  inventoryClass: InventoryClass;
+  heightMm: number | null;
+  widthMm: number;
+  qty: number;
+  widthOnly: boolean;
+  derivedFromWidth: boolean;
+  status: "PENDING" | "ACCEPTED";
+  createdAt: string;
+  acceptedAt: string | null;
+  acceptedPlanIds: string[];
+};
+
+type ExecutedPlan = {
+  label: string;
+  plan: PlanResponse;
+};
+
+type PanelTab = "Inventory" | "Orders";
+type OrdersStatusFilter = "ALL" | "PENDING" | "ACCEPTED";
+type OrdersClassFilter = "ALL" | InventoryClass;
 
 export default function HomePage() {
   const apiUrl = useMemo(() => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000", []);
 
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [inventoryClass, setInventoryClass] = useState<"Komarnici" | "Prozorske daske">("Komarnici");
   const [inventoryLengthMm, setInventoryLengthMm] = useState("");
   const [inventoryQty, setInventoryQty] = useState("");
 
   const [units, setUnits] = useState<"mm" | "cm" | "m">("mm");
-  const [kerfMm, setKerfMm] = useState("3");
-  const [allowanceMm, setAllowanceMm] = useState("1");
-  const [minRemnantMm, setMinRemnantMm] = useState("100");
-  const [orderLinesJson, setOrderLinesJson] = useState(DEFAULT_ORDER_JSON);
+  const [orderClass, setOrderClass] = useState<InventoryClass>("Komarnici");
+  const [orderHeight, setOrderHeight] = useState("");
+  const [orderWidth, setOrderWidth] = useState("");
+  const [orderQty, setOrderQty] = useState("1");
+  const [includeProzorskeDaskeWidths, setIncludeProzorskeDaskeWidths] = useState(false);
+  const [orderRows, setOrderRows] = useState<OrderTableRow[]>([]);
 
-  const [planResponse, setPlanResponse] = useState<PlanResponse | null>(null);
+  const [orders, setOrders] = useState<PersistedOrder[]>([]);
+  const [executedPlans, setExecutedPlans] = useState<ExecutedPlan[]>([]);
+  const [inventoryPanelTab, setInventoryPanelTab] = useState<PanelTab>("Inventory");
+  const [ordersStatusFilter, setOrdersStatusFilter] = useState<OrdersStatusFilter>("ALL");
+  const [ordersClassFilter, setOrdersClassFilter] = useState<OrdersClassFilter>("ALL");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const filteredInventory = useMemo(() => {
-    return inventory
-      .filter((item) => item.inventoryClass === inventoryClass)
+  const rowIdRef = useRef(1);
+
+  const inventoryByClass = useMemo(() => {
+    const komarnici = inventory
+      .filter((item) => item.inventoryClass === "Komarnici")
       .sort((a, b) => a.lengthMm - b.lengthMm);
-  }, [inventory, inventoryClass]);
+    const prozorskeDaske = inventory
+      .filter((item) => item.inventoryClass === "Prozorske daske")
+      .sort((a, b) => a.lengthMm - b.lengthMm);
+    return { komarnici, prozorskeDaske };
+  }, [inventory]);
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter((item) => {
+      const statusMatch = ordersStatusFilter === "ALL" || item.status === ordersStatusFilter;
+      const classMatch = ordersClassFilter === "ALL" || item.inventoryClass === ordersClassFilter;
+      return statusMatch && classMatch;
+    });
+  }, [orders, ordersStatusFilter, ordersClassFilter]);
+
+  const pendingOrdersCount = useMemo(() => {
+    return filteredOrders.filter((item) => item.status === "PENDING").length;
+  }, [filteredOrders]);
+
+  const showOrdersHeightColumn = useMemo(() => {
+    return filteredOrders.some((item) => item.inventoryClass === "Komarnici" || item.heightMm != null);
+  }, [filteredOrders]);
 
   const loadInventory = useCallback(async () => {
     const response = await fetch(`${apiUrl}/inventory`);
@@ -70,12 +123,27 @@ export default function HomePage() {
     setInventory(data.items ?? []);
   }, [apiUrl]);
 
-  useEffect(() => {
-    loadInventory().catch((err: Error) => setError(err.message));
-  }, [loadInventory]);
+  const loadOrders = useCallback(async () => {
+    const response = await fetch(`${apiUrl}/orders`);
+    if (!response.ok) {
+      throw new Error(`Orders fetch failed (${response.status})`);
+    }
+    const data = (await response.json()) as { items: PersistedOrder[] };
+    setOrders(data.items ?? []);
+  }, [apiUrl]);
 
-  async function onAddInventory(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  useEffect(() => {
+    Promise.all([loadInventory(), loadOrders()]).catch((err: Error) => setError(err.message));
+  }, [loadInventory, loadOrders]);
+
+  useEffect(() => {
+    if (orderClass !== "Komarnici") {
+      setIncludeProzorskeDaskeWidths(false);
+      setOrderHeight("");
+    }
+  }, [orderClass]);
+
+  async function onAddInventory(inventoryClass: InventoryClass) {
     const lengthMm = Number(inventoryLengthMm);
     const qty = Number(inventoryQty);
 
@@ -110,30 +178,104 @@ export default function HomePage() {
     }
   }
 
-  async function onPlan(event: FormEvent<HTMLFormElement>) {
+  function onAddOrderRow() {
+    const needsHeight = orderClass === "Komarnici";
+    const parsedHeightMm = Number(orderHeight);
+    const heightMm = needsHeight ? parsedHeightMm : null;
+    const widthMm = Number(orderWidth);
+    const qty = Number(orderQty);
+
+    if (needsHeight && (!Number.isInteger(parsedHeightMm) || parsedHeightMm < 1)) {
+      setError("Height mora biti ceo broj > 0.");
+      return;
+    }
+    if (!Number.isInteger(widthMm) || widthMm < 1) {
+      setError("Width mora biti ceo broj > 0.");
+      return;
+    }
+    if (!Number.isInteger(qty) || qty < 1) {
+      setError("Qty mora biti ceo broj > 0.");
+      return;
+    }
+
+    const baseId = rowIdRef.current;
+    rowIdRef.current += 1;
+
+    const rowsToAdd: OrderTableRow[] = [
+      {
+        id: baseId,
+        inventoryClass: orderClass,
+        heightMm,
+        widthMm,
+        qty,
+        derivedFromWidth: false
+      }
+    ];
+
+    if (orderClass === "Komarnici" && includeProzorskeDaskeWidths) {
+      rowsToAdd.push({
+        id: -baseId,
+        inventoryClass: "Prozorske daske",
+        heightMm: null,
+        widthMm,
+        qty,
+        derivedFromWidth: true,
+        parentRowId: baseId
+      });
+    }
+
+    setOrderRows((prev) => [...prev, ...rowsToAdd]);
+    setError(null);
+    setOrderHeight("");
+    setOrderWidth("");
+    setOrderQty("1");
+  }
+
+  function onRemoveOrderRow(row: OrderTableRow) {
+    setOrderRows((prev) => {
+      if (row.derivedFromWidth) {
+        return prev.filter((entry) => entry.id !== row.id);
+      }
+      return prev.filter((entry) => entry.id !== row.id && entry.parentRowId !== row.id);
+    });
+  }
+
+  async function onOrderSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (orderRows.length === 0) {
+      setError("Tabela porudzbina je prazna.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
+
     try {
-      const orderLines = JSON.parse(orderLinesJson);
-      const response = await fetch(`${apiUrl}/orders/plan`, {
+      const response = await fetch(`${apiUrl}/orders`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           units,
-          params: {
-            kerfMm: Number(kerfMm),
-            allowanceMm: Number(allowanceMm),
-            minRemnantMm: Number(minRemnantMm)
-          },
-          orderLines
+          rows: orderRows.map((row) => ({
+            inventoryClass: row.inventoryClass,
+            height: row.heightMm,
+            width: row.widthMm,
+            qty: row.qty,
+            widthOnly: row.derivedFromWidth,
+            derivedFromWidth: row.derivedFromWidth
+          }))
         })
       });
-      const data = await response.json();
+
+      const data = (await response.json()) as { error?: string; items?: PersistedOrder[] };
       if (!response.ok) {
-        throw new Error(data.error ?? `Planning failed (${response.status})`);
+        throw new Error(data.error ?? `Order save failed (${response.status})`);
       }
-      setPlanResponse(data as PlanResponse);
+
+      setOrders(data.items ?? []);
+      setOrderRows([]);
+      setInventoryPanelTab("Orders");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
     } finally {
@@ -141,23 +283,96 @@ export default function HomePage() {
     }
   }
 
-  async function onCommit() {
-    if (!planResponse?.planId) {
-      return;
-    }
+  async function onAcceptOrder(orderId: string) {
     setBusy(true);
     setError(null);
+
     try {
-      const response = await fetch(`${apiUrl}/orders/commit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planId: planResponse.planId })
+      const response = await fetch(`${apiUrl}/orders/${orderId}/accept`, {
+        method: "POST"
       });
-      const data = await response.json();
+
+      const data = (await response.json()) as {
+        error?: string;
+        items?: PersistedOrder[];
+        inventory?: InventoryItem[];
+        plan?: PlanResponse;
+      };
+
       if (!response.ok) {
-        throw new Error(data.error ?? `Commit failed (${response.status})`);
+        throw new Error(data.error ?? `Order accept failed (${response.status})`);
       }
-      await loadInventory();
+
+      setOrders(data.items ?? []);
+      if (data.inventory) {
+        setInventory(data.inventory);
+      }
+      if (data.plan) {
+        const acceptedPlan = data.plan;
+        setExecutedPlans((prev) => [
+          {
+            label: `Order ${orderId}`,
+            plan: acceptedPlan
+          },
+          ...prev
+        ]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onAcceptAll() {
+    setBusy(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${apiUrl}/orders/accept-all`, {
+        method: "POST"
+      });
+
+      const data = (await response.json()) as {
+        error?: string;
+        items?: PersistedOrder[];
+        inventory?: InventoryItem[];
+        results?: Array<{
+          orderId: string;
+          status: "ACCEPTED" | "ALREADY_ACCEPTED" | "FAILED";
+          error?: string;
+          plan?: PlanResponse;
+        }>;
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? `Accept All failed (${response.status})`);
+      }
+
+      setOrders(data.items ?? []);
+      if (data.inventory) {
+        setInventory(data.inventory);
+      }
+
+      const acceptedPlans: ExecutedPlan[] = [];
+      for (const item of data.results ?? []) {
+        if (!item.plan) {
+          continue;
+        }
+        acceptedPlans.push({
+          label: `Order ${item.orderId}`,
+          plan: item.plan
+        });
+      }
+
+      if (acceptedPlans.length > 0) {
+        setExecutedPlans((prev) => [...acceptedPlans, ...prev]);
+      }
+
+      const failed = (data.results ?? []).filter((item) => item.status === "FAILED");
+      if (failed.length > 0) {
+        setError(`Neke porudzbine nisu prihvacene: ${failed.map((item) => item.orderId).join(", ")}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
     } finally {
@@ -171,142 +386,335 @@ export default function HomePage() {
         <p className="eyebrow">Cutting Optimizer</p>
         <h1>Cutting Materials</h1>
         <p className="sub">
-          Frontend na Vercelu, backend na Renderu, zajednički monorepo i BFD algoritam za minimizaciju otpada.
+          Aplikacija sluzi za optimizaciju secenja komarnika i prozorskih daski na osnovu stanja lagera,
+          kako bi se smanjio otpad materijala i ubrzala izrada naloga.
         </p>
       </header>
 
       <section className="panel">
-        <h2>Inventory</h2>
-        <form onSubmit={onAddInventory} className="grid">
-          <label>
+        <h2>Inventory / Orders</h2>
+        <div className="panel-tabs" role="tablist" aria-label="Inventory and orders tabs">
+          <button
+            type="button"
+            role="tab"
+            id="inventory-tab"
+            aria-selected={inventoryPanelTab === "Inventory"}
+            aria-controls="inventory-tabpanel"
+            tabIndex={inventoryPanelTab === "Inventory" ? 0 : -1}
+            className={`panel-tab ${inventoryPanelTab === "Inventory" ? "active" : ""}`}
+            onClick={() => setInventoryPanelTab("Inventory")}
+          >
+            Inventory
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="orders-tab"
+            aria-selected={inventoryPanelTab === "Orders"}
+            aria-controls="orders-tabpanel"
+            tabIndex={inventoryPanelTab === "Orders" ? 0 : -1}
+            className={`panel-tab ${inventoryPanelTab === "Orders" ? "active" : ""}`}
+            onClick={() => setInventoryPanelTab("Orders")}
+          >
+            Orders
+          </button>
+        </div>
+
+        {inventoryPanelTab === "Inventory" ? (
+          <div role="tabpanel" id="inventory-tabpanel" aria-labelledby="inventory-tab">
+            <div className="grid">
+              <details className="inventory-collapsible">
+                <summary>Dodaj novu stavku</summary>
+                <div className="inventory-collapsible-content">
+                  <label className="short-field">
+                    Length (mm)
+                    <input
+                      className="short-input"
+                      type="number"
+                      min={1}
+                      required
+                      placeholder="npr. 3000"
+                      value={inventoryLengthMm}
+                      onChange={(event) => setInventoryLengthMm(event.target.value)}
+                    />
+                  </label>
+                  <label className="short-field">
+                    Qty
+                    <input
+                      className="short-input"
+                      type="number"
+                      min={1}
+                      required
+                      placeholder="npr. 5"
+                      value={inventoryQty}
+                      onChange={(event) => setInventoryQty(event.target.value)}
+                    />
+                  </label>
+                  <div className="inventory-action-row">
+                    <button type="button" disabled={busy} onClick={() => onAddInventory("Komarnici")}>
+                      Dodaj Komarnici
+                    </button>
+                    <button type="button" disabled={busy} onClick={() => onAddInventory("Prozorske daske")}>
+                      Dodaj Prozorske daske
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </div>
+            <div className="inventory-table-wrap">
+              <p className="inventory-table-title">Komarnici</p>
+              {inventoryByClass.komarnici.length === 0 ? (
+                <p className="inventory-empty">Nema unosa za klasu Komarnici.</p>
+              ) : (
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>Length (mm)</th>
+                      <th>Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventoryByClass.komarnici.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.lengthMm}</td>
+                        <td>{item.qty}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="inventory-table-wrap">
+              <p className="inventory-table-title">Prozorske daske</p>
+              {inventoryByClass.prozorskeDaske.length === 0 ? (
+                <p className="inventory-empty">Nema unosa za klasu Prozorske daske.</p>
+              ) : (
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>Length (mm)</th>
+                      <th>Qty</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inventoryByClass.prozorskeDaske.map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.lengthMm}</td>
+                        <td>{item.qty}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="orders-history" role="tabpanel" id="orders-tabpanel" aria-labelledby="orders-tab">
+            <div className="order-submit-wrap">
+              <button type="button" disabled={busy || pendingOrdersCount === 0} onClick={onAcceptAll}>
+                Accept All
+              </button>
+            </div>
+            <div className="orders-filters">
+              <label className="short-field">
+                Status
+                <select
+                  className="short-input"
+                  value={ordersStatusFilter}
+                  onChange={(event) => setOrdersStatusFilter(event.target.value as OrdersStatusFilter)}
+                >
+                  <option value="ALL">Sve</option>
+                  <option value="PENDING">Pending</option>
+                  <option value="ACCEPTED">Accepted</option>
+                </select>
+              </label>
+              <label className="short-field">
+                Klasa
+                <select
+                  className="short-input"
+                  value={ordersClassFilter}
+                  onChange={(event) => setOrdersClassFilter(event.target.value as OrdersClassFilter)}
+                >
+                  <option value="ALL">Sve</option>
+                  <option value="Komarnici">Komarnici</option>
+                  <option value="Prozorske daske">Prozorske daske</option>
+                </select>
+              </label>
+            </div>
+            {filteredOrders.length === 0 ? (
+              <p className="inventory-empty">Nema kreiranih porudzbina.</p>
+            ) : (
+              <div className="inventory-table-wrap">
+                <table className="inventory-table">
+                  <thead>
+                    <tr>
+                      <th>Klasa</th>
+                      {showOrdersHeightColumn && <th>Height</th>}
+                      <th>Width</th>
+                      <th>Qty</th>
+                      <th>Akcija</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredOrders.map((order) => (
+                      <tr key={order.id}>
+                        <td>{order.inventoryClass}</td>
+                        {showOrdersHeightColumn && <td>{order.heightMm ?? "-"}</td>}
+                        <td>{order.widthMm}</td>
+                        <td>{order.qty}</td>
+                        <td>
+                          {order.status === "PENDING" ? (
+                            <button type="button" disabled={busy} onClick={() => onAcceptOrder(order.id)}>
+                              Accept
+                            </button>
+                          ) : (
+                            <span>Accepted</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Order Plan</h2>
+        <form onSubmit={onOrderSubmit} className="grid order-grid">
+          <label className="short-field">
             Klasa
             <select
-              value={inventoryClass}
-              onChange={(event) => setInventoryClass(event.target.value as "Komarnici" | "Prozorske daske")}
+              className="short-input"
+              value={orderClass}
+              onChange={(event) => setOrderClass(event.target.value as InventoryClass)}
             >
               <option value="Komarnici">Komarnici</option>
               <option value="Prozorske daske">Prozorske daske</option>
             </select>
           </label>
-          <details className="inventory-collapsible">
-            <summary>Dodaj novu stavku</summary>
-            <div className="inventory-collapsible-content">
-              <label className="compact-field">
-                Length (mm)
-                <input
-                  className="compact-input"
-                  type="number"
-                  min={1}
-                  required
-                  placeholder="npr. 3000"
-                  value={inventoryLengthMm}
-                  onChange={(event) => setInventoryLengthMm(event.target.value)}
-                />
-              </label>
-              <label className="compact-field">
-                Qty
-                <input
-                  className="compact-input"
-                  type="number"
-                  min={1}
-                  required
-                  placeholder="npr. 5"
-                  value={inventoryQty}
-                  onChange={(event) => setInventoryQty(event.target.value)}
-                />
-              </label>
-              <button type="submit" disabled={busy}>
-                Dodaj
-              </button>
-            </div>
-          </details>
-        </form>
-        <div className="inventory-table-wrap">
-          <p className="inventory-table-title">Prikaz klase: {inventoryClass}</p>
-          {filteredInventory.length === 0 ? (
-            <p className="inventory-empty">Nema unosa za izabranu klasu.</p>
-          ) : (
-            <table className="inventory-table">
-              <thead>
-                <tr>
-                  <th>Length (mm)</th>
-                  <th>Qty</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredInventory.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.lengthMm}</td>
-                    <td>{item.qty}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>Order Plan</h2>
-        <form onSubmit={onPlan} className="grid">
-          <label>
+          <label className="short-field">
             Units
-            <select value={units} onChange={(event) => setUnits(event.target.value as "mm" | "cm" | "m")}>
+            <select
+              className="short-input"
+              value={units}
+              onChange={(event) => setUnits(event.target.value as "mm" | "cm" | "m")}
+            >
               <option value="mm">mm</option>
               <option value="cm">cm</option>
               <option value="m">m</option>
             </select>
           </label>
-          <label>
-            Kerf (mm)
-            <input type="number" min={0} value={kerfMm} onChange={(event) => setKerfMm(event.target.value)} />
-          </label>
-          <label>
-            Allowance (mm)
+          {orderClass === "Komarnici" && (
+            <label className="short-field">
+              Height
+              <input
+                className="short-input"
+                type="number"
+                min={1}
+                value={orderHeight}
+                onChange={(event) => setOrderHeight(event.target.value)}
+              />
+            </label>
+          )}
+          <label className="short-field">
+            Width
             <input
+              className="short-input"
               type="number"
-              min={0}
-              value={allowanceMm}
-              onChange={(event) => setAllowanceMm(event.target.value)}
+              min={1}
+              value={orderWidth}
+              onChange={(event) => setOrderWidth(event.target.value)}
             />
           </label>
-          <label>
-            Min remnant (mm)
+          <label className="short-field">
+            Qty
             <input
+              className="short-input"
               type="number"
-              min={0}
-              value={minRemnantMm}
-              onChange={(event) => setMinRemnantMm(event.target.value)}
+              min={1}
+              value={orderQty}
+              onChange={(event) => setOrderQty(event.target.value)}
             />
           </label>
-          <label className="textarea-row">
-            Order lines JSON
-            <textarea
-              rows={8}
-              value={orderLinesJson}
-              onChange={(event) => setOrderLinesJson(event.target.value)}
-            />
-          </label>
-          <button type="submit" disabled={busy}>
-            Generiši plan
-          </button>
+
+          {orderClass === "Komarnici" && (
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={includeProzorskeDaskeWidths}
+                onChange={(event) => setIncludeProzorskeDaskeWidths(event.target.checked)}
+              />
+              Prozorske Daske
+            </label>
+          )}
+
+          <div className="order-actions">
+            <button type="button" disabled={busy} onClick={onAddOrderRow}>
+              Enter into table
+            </button>
+          </div>
+
+          <div className="order-table-wrap">
+            <p className="inventory-table-title">Tabela porudzbina</p>
+            {orderRows.length === 0 ? (
+              <p className="inventory-empty">Nema unosa u tabeli.</p>
+            ) : (
+              <table className="inventory-table">
+                <thead>
+                  <tr>
+                    <th>Klasa</th>
+                    {orderClass === "Komarnici" && <th>Height</th>}
+                    <th>Width</th>
+                    <th>Qty</th>
+                    <th>Akcija</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.inventoryClass}</td>
+                      {orderClass === "Komarnici" && <td>{row.heightMm ?? "-"}</td>}
+                      <td>{row.widthMm}</td>
+                      <td>{row.qty}</td>
+                      <td>
+                        {row.derivedFromWidth ? (
+                          <span>Auto</span>
+                        ) : (
+                          <button type="button" onClick={() => onRemoveOrderRow(row)}>
+                            Obrisi
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div className="order-submit-wrap">
+              <button type="submit" disabled={busy || orderRows.length === 0}>
+                Order
+              </button>
+            </div>
+          </div>
         </form>
       </section>
 
       <section className="panel">
         <h2>Plan Result</h2>
-        {planResponse ? (
-          <>
-            <p className="status">
-              Status: <strong>{planResponse.status}</strong> | Plan ID: <code>{planResponse.planId}</code>
-            </p>
-            <button onClick={onCommit} disabled={busy}>
-              Commit plan
-            </button>
-            <pre>{JSON.stringify(planResponse, null, 2)}</pre>
-          </>
+        {executedPlans.length > 0 ? (
+          executedPlans.map((entry) => (
+            <div key={entry.plan.planId} className="result-item">
+              <p className="status">
+                {entry.label}: <strong>{entry.plan.status}</strong> | Plan ID: <code>{entry.plan.planId}</code>
+              </p>
+              <pre>{JSON.stringify(entry.plan, null, 2)}</pre>
+            </div>
+          ))
         ) : (
-          <p>Pokreni planiranje da vidiš rezultat.</p>
+          <p>Prihvati porudzbinu da vidis rezultat krojenja.</p>
         )}
       </section>
 
