@@ -1,6 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import cuttingMaterialBanner from "./cutting_material_banner.png";
 
 type InventoryClass = "Komarnici" | "Prozorske daske";
 
@@ -36,8 +38,7 @@ type OrderTableRow = {
   heightMm: number | null;
   widthMm: number;
   qty: number;
-  derivedFromWidth: boolean;
-  parentRowId?: number;
+  includeProzorskeDaske: boolean;
 };
 
 type PersistedOrder = {
@@ -208,21 +209,9 @@ export default function HomePage() {
         heightMm,
         widthMm,
         qty,
-        derivedFromWidth: false
+        includeProzorskeDaske: orderClass === "Komarnici" && includeProzorskeDaskeWidths
       }
     ];
-
-    if (orderClass === "Komarnici" && includeProzorskeDaskeWidths) {
-      rowsToAdd.push({
-        id: -baseId,
-        inventoryClass: "Prozorske daske",
-        heightMm: null,
-        widthMm,
-        qty,
-        derivedFromWidth: true,
-        parentRowId: baseId
-      });
-    }
 
     setOrderRows((prev) => [...prev, ...rowsToAdd]);
     setError(null);
@@ -232,12 +221,7 @@ export default function HomePage() {
   }
 
   function onRemoveOrderRow(row: OrderTableRow) {
-    setOrderRows((prev) => {
-      if (row.derivedFromWidth) {
-        return prev.filter((entry) => entry.id !== row.id);
-      }
-      return prev.filter((entry) => entry.id !== row.id && entry.parentRowId !== row.id);
-    });
+    setOrderRows((prev) => prev.filter((entry) => entry.id !== row.id));
   }
 
   async function onOrderSubmit(event: FormEvent<HTMLFormElement>) {
@@ -257,14 +241,32 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           units,
-          rows: orderRows.map((row) => ({
-            inventoryClass: row.inventoryClass,
-            height: row.heightMm,
-            width: row.widthMm,
-            qty: row.qty,
-            widthOnly: row.derivedFromWidth,
-            derivedFromWidth: row.derivedFromWidth
-          }))
+          rows: orderRows.flatMap((row) => {
+            const baseRow = {
+              inventoryClass: row.inventoryClass,
+              height: row.heightMm,
+              width: row.widthMm,
+              qty: row.qty,
+              widthOnly: false,
+              derivedFromWidth: false
+            };
+
+            if (row.inventoryClass === "Komarnici" && row.includeProzorskeDaske) {
+              return [
+                baseRow,
+                {
+                  inventoryClass: "Prozorske daske" as const,
+                  height: null,
+                  width: row.widthMm,
+                  qty: row.qty,
+                  widthOnly: true,
+                  derivedFromWidth: true
+                }
+              ];
+            }
+
+            return [baseRow];
+          })
         })
       });
 
@@ -384,11 +386,18 @@ export default function HomePage() {
     <main className="page">
       <header className="hero">
         <p className="eyebrow">Cutting Optimizer</p>
-        <h1>Cutting Materials</h1>
-        <p className="sub">
-          Aplikacija sluzi za optimizaciju secenja komarnika i prozorskih daski na osnovu stanja lagera,
-          kako bi se smanjio otpad materijala i ubrzala izrada naloga.
-        </p>
+        <div className="hero-content">
+          <Image
+            src={cuttingMaterialBanner}
+            alt="Cutting Materials"
+            className="hero-banner"
+            priority
+          />
+          <p className="sub">
+            Aplikacija sluzi za optimizaciju secenja komarnika i prozorskih daski na osnovu stanja lagera,
+            kako bi se smanjio otpad materijala i ubrzala izrada naloga.
+          </p>
+        </div>
       </header>
 
       <section className="panel">
@@ -659,6 +668,7 @@ export default function HomePage() {
                     {orderClass === "Komarnici" && <th>Height</th>}
                     <th>Width</th>
                     <th>Qty</th>
+                    <th className="pdaske-col">P. Daske</th>
                     <th>Akcija</th>
                   </tr>
                 </thead>
@@ -669,14 +679,23 @@ export default function HomePage() {
                       {orderClass === "Komarnici" && <td>{row.heightMm ?? "-"}</td>}
                       <td>{row.widthMm}</td>
                       <td>{row.qty}</td>
-                      <td>
-                        {row.derivedFromWidth ? (
-                          <span>Auto</span>
+                      <td className="pdaske-col">
+                        {row.inventoryClass === "Komarnici" ? (
+                          <input
+                            className="pdaske-check"
+                            type="checkbox"
+                            checked={row.includeProzorskeDaske}
+                            disabled
+                            aria-label={`P. Daske za red ${row.id}`}
+                          />
                         ) : (
-                          <button type="button" onClick={() => onRemoveOrderRow(row)}>
-                            Obrisi
-                          </button>
+                          "-"
                         )}
+                      </td>
+                      <td>
+                        <button type="button" onClick={() => onRemoveOrderRow(row)}>
+                          Obrisi
+                        </button>
                       </td>
                     </tr>
                   ))}

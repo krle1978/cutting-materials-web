@@ -56,9 +56,24 @@ h1 {
   font-size: clamp(1.7rem, 2.6vw, 2.5rem);
 }
 
+.hero-banner {
+  display: block;
+  width: min(100%, 520px);
+  height: auto;
+  margin: 0;
+}
+
+.hero-content {
+  margin-top: 0.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
 .sub {
   margin: 0;
-  max-width: 70ch;
+  max-width: 42ch;
 }
 
 .panel {
@@ -210,6 +225,21 @@ button:disabled {
   margin-top: 0.6rem;
 }
 
+.pdaske-col {
+  text-align: center;
+  width: 110px;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.pdaske-check {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent-2);
+  pointer-events: none;
+}
+
 .result-item + .result-item {
   margin-top: 1rem;
 }
@@ -293,5 +323,19 @@ pre {
 @media (max-width: 760px) {
   .page {
     padding: 1rem 0.7rem 2rem;
+  }
+
+  .hero-content {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .hero-banner {
+    width: min(100%, 460px);
+  }
+
+  .sub {
+    max-width: 70ch;
   }
 }

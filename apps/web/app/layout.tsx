@@ -15,7 +15,11 @@ const mono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "Cutting Materials",
-  description: "Planiranje i optimizacija sečenja letvica"
+  description: "Planiranje i optimizacija sečenja letvica",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg"
+  }
 };
 
 export default function RootLayout({
@@ -29,4 +33,3 @@ export default function RootLayout({
     </html>
   );
 }
-
