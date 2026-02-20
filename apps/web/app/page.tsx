@@ -393,14 +393,9 @@ export default function HomePage() {
 
       <section className="panel">
         <h2>Inventory / Orders</h2>
-        <div className="panel-tabs" role="tablist" aria-label="Inventory and orders tabs">
+        <div className="panel-tabs" role="group" aria-label="Inventory and orders tabs">
           <button
             type="button"
-            role="tab"
-            id="inventory-tab"
-            aria-selected={inventoryPanelTab === "Inventory"}
-            aria-controls="inventory-tabpanel"
-            tabIndex={inventoryPanelTab === "Inventory" ? 0 : -1}
             className={`panel-tab ${inventoryPanelTab === "Inventory" ? "active" : ""}`}
             onClick={() => setInventoryPanelTab("Inventory")}
           >
@@ -408,11 +403,6 @@ export default function HomePage() {
           </button>
           <button
             type="button"
-            role="tab"
-            id="orders-tab"
-            aria-selected={inventoryPanelTab === "Orders"}
-            aria-controls="orders-tabpanel"
-            tabIndex={inventoryPanelTab === "Orders" ? 0 : -1}
             className={`panel-tab ${inventoryPanelTab === "Orders" ? "active" : ""}`}
             onClick={() => setInventoryPanelTab("Orders")}
           >
@@ -421,7 +411,7 @@ export default function HomePage() {
         </div>
 
         {inventoryPanelTab === "Inventory" ? (
-          <div role="tabpanel" id="inventory-tabpanel" aria-labelledby="inventory-tab">
+          <div>
             <div className="grid">
               <details className="inventory-collapsible">
                 <summary>Dodaj novu stavku</summary>
@@ -509,7 +499,7 @@ export default function HomePage() {
             </div>
           </div>
         ) : (
-          <div className="orders-history" role="tabpanel" id="orders-tabpanel" aria-labelledby="orders-tab">
+          <div className="orders-history">
             <div className="order-submit-wrap">
               <button type="button" disabled={busy || pendingOrdersCount === 0} onClick={onAcceptAll}>
                 Accept All
