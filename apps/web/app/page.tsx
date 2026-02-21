@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
 import Image from "next/image";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import cuttingMaterialBanner from "./cutting_material_banner.png";
 
 type InventoryClass = "Komarnici" | "Prozorske daske";
@@ -60,6 +60,7 @@ type ExecutedPlan = {
   plan: PlanResponse;
 };
 
+type MainTab = "InventoryOrders" | "OrderPlan";
 type PanelTab = "Inventory" | "Orders";
 type OrdersStatusFilter = "ALL" | "PENDING" | "ACCEPTED";
 type OrdersClassFilter = "ALL" | InventoryClass;
@@ -81,6 +82,7 @@ export default function HomePage() {
 
   const [orders, setOrders] = useState<PersistedOrder[]>([]);
   const [executedPlans, setExecutedPlans] = useState<ExecutedPlan[]>([]);
+  const [mainTab, setMainTab] = useState<MainTab>("InventoryOrders");
   const [inventoryPanelTab, setInventoryPanelTab] = useState<PanelTab>("Inventory");
   const [ordersStatusFilter, setOrdersStatusFilter] = useState<OrdersStatusFilter>("ALL");
   const [ordersClassFilter, setOrdersClassFilter] = useState<OrdersClassFilter>("ALL");
@@ -114,6 +116,10 @@ export default function HomePage() {
   const showOrdersHeightColumn = useMemo(() => {
     return filteredOrders.some((item) => item.inventoryClass === "Komarnici" || item.heightMm != null);
   }, [filteredOrders]);
+
+  const showOrderRowsHeightColumn = useMemo(() => {
+    return orderRows.some((item) => item.inventoryClass === "Komarnici" || item.heightMm != null);
+  }, [orderRows]);
 
   const loadInventory = useCallback(async () => {
     const response = await fetch(`${apiUrl}/inventory`);
@@ -401,6 +407,28 @@ export default function HomePage() {
       </header>
 
       <section className="panel">
+        <div className="panel-tabs" role="group" aria-label="Main tabs">
+          <button
+            type="button"
+            aria-pressed={mainTab === "InventoryOrders"}
+            className={`panel-tab ${mainTab === "InventoryOrders" ? "active" : ""}`}
+            onClick={() => setMainTab("InventoryOrders")}
+          >
+            Inventory / Orders
+          </button>
+          <button
+            type="button"
+            aria-pressed={mainTab === "OrderPlan"}
+            className={`panel-tab ${mainTab === "OrderPlan" ? "active" : ""}`}
+            onClick={() => setMainTab("OrderPlan")}
+          >
+            Order Plan
+          </button>
+        </div>
+      </section>
+
+      {mainTab === "InventoryOrders" && (
+      <section className="panel">
         <h2>Inventory / Orders</h2>
         <div className="panel-tabs" role="group" aria-label="Inventory and orders tabs">
           <button
@@ -579,7 +607,9 @@ export default function HomePage() {
           </div>
         )}
       </section>
+      )}
 
+      {mainTab === "OrderPlan" && (
       <section className="panel">
         <h2>Order Plan</h2>
         <form onSubmit={onOrderSubmit} className="grid order-grid">
@@ -665,7 +695,7 @@ export default function HomePage() {
                 <thead>
                   <tr>
                     <th>Klasa</th>
-                    {orderClass === "Komarnici" && <th>Height</th>}
+                    {showOrderRowsHeightColumn && <th>Height</th>}
                     <th>Width</th>
                     <th>Qty</th>
                     <th className="pdaske-col">P. Daske</th>
@@ -676,7 +706,7 @@ export default function HomePage() {
                   {orderRows.map((row) => (
                     <tr key={row.id}>
                       <td>{row.inventoryClass}</td>
-                      {orderClass === "Komarnici" && <td>{row.heightMm ?? "-"}</td>}
+                      {showOrderRowsHeightColumn && <td>{row.heightMm ?? "-"}</td>}
                       <td>{row.widthMm}</td>
                       <td>{row.qty}</td>
                       <td className="pdaske-col">
@@ -710,6 +740,7 @@ export default function HomePage() {
           </div>
         </form>
       </section>
+      )}
 
       <section className="panel">
         <h2>Plan Result</h2>
