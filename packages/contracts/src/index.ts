@@ -73,8 +73,15 @@ export const orderQueueRowSchema = z.object({
 });
 export type OrderQueueRow = z.infer<typeof orderQueueRowSchema>;
 
+export const orderCreatedBySchema = z.object({
+  username: z.string().trim().min(1),
+  email: z.string().trim().email()
+});
+export type OrderCreatedBy = z.infer<typeof orderCreatedBySchema>;
+
 export const orderQueueCreateRequestSchema = z.object({
   units: unitsSchema.default("mm"),
+  createdBy: orderCreatedBySchema,
   rows: z.array(orderQueueRowSchema).min(1)
 });
 export type OrderQueueCreateRequest = z.infer<typeof orderQueueCreateRequestSchema>;

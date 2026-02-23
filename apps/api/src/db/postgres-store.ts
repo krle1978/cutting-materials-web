@@ -172,10 +172,12 @@ export class PostgresStore implements PlanStore {
             qty,
             width_only,
             derived_from_width,
+            created_by_username,
+            created_by_email,
             status,
             accepted_plan_ids
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', '[]'::jsonb)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING', '[]'::jsonb)
           RETURNING
             id,
             inventory_class,
@@ -184,6 +186,8 @@ export class PostgresStore implements PlanStore {
             qty,
             width_only,
             derived_from_width,
+            created_by_username,
+            created_by_email,
             status,
             created_at,
             accepted_at,
@@ -196,7 +200,9 @@ export class PostgresStore implements PlanStore {
           entry.widthMm,
           entry.qty,
           entry.widthOnly,
-          entry.derivedFromWidth
+          entry.derivedFromWidth,
+          entry.createdByUsername,
+          entry.createdByEmail
         ]
       );
       created.push(mapOrderRow(rows[0]));
@@ -215,6 +221,8 @@ export class PostgresStore implements PlanStore {
         qty,
         width_only,
         derived_from_width,
+        created_by_username,
+        created_by_email,
         status,
         created_at,
         accepted_at,
@@ -237,6 +245,8 @@ export class PostgresStore implements PlanStore {
         qty,
         width_only,
         derived_from_width,
+        created_by_username,
+        created_by_email,
         status,
         created_at,
         accepted_at,
@@ -279,6 +289,8 @@ export class PostgresStore implements PlanStore {
         qty,
         width_only,
         derived_from_width,
+        created_by_username,
+        created_by_email,
         status,
         created_at,
         accepted_at,
@@ -303,6 +315,8 @@ type OrderRow = {
   qty: number;
   width_only: boolean;
   derived_from_width: boolean;
+  created_by_username: string;
+  created_by_email: string;
   status: "PENDING" | "ACCEPTED";
   created_at: Date | string;
   accepted_at: Date | string | null;
@@ -360,6 +374,8 @@ function mapOrderRow(row: OrderRow): OrderQueueItem {
     qty: row.qty,
     widthOnly: row.width_only,
     derivedFromWidth: row.derived_from_width,
+    createdByUsername: row.created_by_username,
+    createdByEmail: row.created_by_email,
     status: row.status,
     createdAt: toIsoString(row.created_at),
     acceptedAt: row.accepted_at ? toIsoString(row.accepted_at) : null,

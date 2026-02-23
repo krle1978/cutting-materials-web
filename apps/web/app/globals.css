@@ -41,6 +41,78 @@ body {
   gap: 1rem;
 }
 
+.auth-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.auth-card {
+  width: min(560px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1.1rem;
+  background: var(--panel);
+  display: grid;
+  gap: 0.75rem;
+}
+
+.auth-switch {
+  display: flex;
+  gap: 0.55rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.auth-form button {
+  max-width: 240px;
+}
+
+.auth-note {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--accent-2);
+}
+
+.auth-defaults p {
+  margin: 0.2rem 0 0;
+}
+
+.auth-info {
+  margin: 0;
+  background: #0f3c2f;
+  color: #d9f7dd;
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.session-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.session-badge {
+  padding: 0.24rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  background: rgba(23, 98, 75, 0.1);
+}
+
 .hero {
   padding: 1.2rem 1.3rem;
   border: 1px solid var(--line);
@@ -324,6 +396,29 @@ button:disabled {
   gap: 0.25rem;
 }
 
+.message-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.message-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.65rem;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.message-meta {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--accent-2);
+}
+
+.message-body {
+  margin: 0.5rem 0 0;
+  white-space: pre-line;
+}
+
 .orders-filters {
   display: flex;
   gap: 0.6rem;
@@ -394,6 +489,11 @@ pre {
 @media (max-width: 760px) {
   .page {
     padding: 1rem 0.7rem 2rem;
+  }
+
+  .session-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .hero-content {

@@ -83,11 +83,47 @@ export const migrationStatements = [
       qty INTEGER NOT NULL CHECK (qty > 0),
       width_only BOOLEAN NOT NULL DEFAULT FALSE,
       derived_from_width BOOLEAN NOT NULL DEFAULT FALSE,
+      created_by_username TEXT NOT NULL DEFAULT 'unknown',
+      created_by_email TEXT NOT NULL DEFAULT 'unknown@local.invalid',
       status TEXT NOT NULL CHECK (status IN ('PENDING', 'ACCEPTED')),
       accepted_plan_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       accepted_at TIMESTAMPTZ NULL
     );
+  `,
+  `
+    ALTER TABLE order_entries
+    ADD COLUMN IF NOT EXISTS created_by_username TEXT;
+  `,
+  `
+    ALTER TABLE order_entries
+    ADD COLUMN IF NOT EXISTS created_by_email TEXT;
+  `,
+  `
+    UPDATE order_entries
+    SET created_by_username = 'unknown'
+    WHERE created_by_username IS NULL OR LENGTH(TRIM(created_by_username)) = 0;
+  `,
+  `
+    UPDATE order_entries
+    SET created_by_email = 'unknown@local.invalid'
+    WHERE created_by_email IS NULL OR LENGTH(TRIM(created_by_email)) = 0;
+  `,
+  `
+    ALTER TABLE order_entries
+    ALTER COLUMN created_by_username SET DEFAULT 'unknown';
+  `,
+  `
+    ALTER TABLE order_entries
+    ALTER COLUMN created_by_username SET NOT NULL;
+  `,
+  `
+    ALTER TABLE order_entries
+    ALTER COLUMN created_by_email SET DEFAULT 'unknown@local.invalid';
+  `,
+  `
+    ALTER TABLE order_entries
+    ALTER COLUMN created_by_email SET NOT NULL;
   `,
   `
     CREATE INDEX IF NOT EXISTS order_entries_status_created_idx

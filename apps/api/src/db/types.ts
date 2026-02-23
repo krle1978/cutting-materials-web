@@ -22,6 +22,8 @@ export type CreateOrderInput = {
   qty: number;
   widthOnly: boolean;
   derivedFromWidth: boolean;
+  createdByUsername: string;
+  createdByEmail: string;
 };
 
 export type OrderQueueItem = {
@@ -32,6 +34,8 @@ export type OrderQueueItem = {
   qty: number;
   widthOnly: boolean;
   derivedFromWidth: boolean;
+  createdByUsername: string;
+  createdByEmail: string;
   status: OrderQueueStatus;
   createdAt: string;
   acceptedAt: string | null;

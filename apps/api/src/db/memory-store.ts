@@ -44,6 +44,8 @@ type PersistedMemoryState = {
     qty?: unknown;
     widthOnly?: unknown;
     derivedFromWidth?: unknown;
+    createdByUsername?: unknown;
+    createdByEmail?: unknown;
     status?: unknown;
     createdAt?: unknown;
     acceptedAt?: unknown;
@@ -107,6 +109,8 @@ export class MemoryStore implements PlanStore {
       qty: toPositiveInt(entry.qty),
       widthOnly: entry.widthOnly === true,
       derivedFromWidth: entry.derivedFromWidth === true,
+      createdByUsername: normalizeOrderOwnerUsername(entry.createdByUsername),
+      createdByEmail: normalizeOrderOwnerEmail(entry.createdByEmail),
       status: "PENDING",
       createdAt,
       acceptedAt: null,
@@ -309,6 +313,8 @@ export class MemoryStore implements PlanStore {
         qty,
         widthOnly: item.widthOnly === true,
         derivedFromWidth: item.derivedFromWidth === true,
+        createdByUsername: normalizeOrderOwnerUsername(item.createdByUsername),
+        createdByEmail: normalizeOrderOwnerEmail(item.createdByEmail),
         status: normalizeOrderStatus(item.status),
         createdAt: typeof item.createdAt === "string" && item.createdAt.length > 0 ? item.createdAt : new Date().toISOString(),
         acceptedAt:
@@ -384,6 +390,22 @@ function normalizeInventoryClass(value: unknown): InventoryClass {
 
 function normalizeOrderStatus(value: unknown): OrderQueueStatus {
   return value === "ACCEPTED" ? "ACCEPTED" : "PENDING";
+}
+
+function normalizeOrderOwnerUsername(value: unknown): string {
+  if (typeof value !== "string") {
+    return "unknown";
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : "unknown";
+}
+
+function normalizeOrderOwnerEmail(value: unknown): string {
+  if (typeof value !== "string") {
+    return "unknown@local.invalid";
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : "unknown@local.invalid";
 }
 
 function toPositiveInt(value: number): number {

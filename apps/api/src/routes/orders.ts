@@ -42,13 +42,16 @@ export async function registerOrdersRoutes(
       };
     }
 
+    const createdBy = resolveOrderCreatedBy(request.body);
     const items = parsed.data.rows.map((row) => ({
       inventoryClass: row.inventoryClass,
       heightMm: row.height == null ? null : toMillimeters(row.height, parsed.data.units),
       widthMm: toMillimeters(row.width, parsed.data.units),
       qty: Math.round(row.qty),
       widthOnly: row.widthOnly === true,
-      derivedFromWidth: row.derivedFromWidth === true
+      derivedFromWidth: row.derivedFromWidth === true,
+      createdByUsername: createdBy.username,
+      createdByEmail: createdBy.email
     }));
 
     const hasInvalidLength = items.some((item) => {
@@ -105,6 +108,7 @@ export async function registerOrdersRoutes(
       orderId: string;
       status: "ACCEPTED" | "ALREADY_ACCEPTED" | "FAILED";
       error?: string;
+      order?: OrderQueueItem;
       plan?: CutPlanResult & { planId: string };
     }> = [];
 
@@ -114,6 +118,7 @@ export async function registerOrdersRoutes(
         results.push({
           orderId: order.id,
           status: result.status,
+          order: result.order,
           plan: result.plan
         });
       } catch (error) {
@@ -311,6 +316,25 @@ function resolveWidthOnly(body: unknown): boolean {
     return false;
   }
   return body.widthOnly === true;
+}
+
+function resolveOrderCreatedBy(body: unknown): { username: string; email: string } {
+  const fallback = {
+    username: "unknown",
+    email: "unknown@local.invalid"
+  };
+
+  if (!isRecord(body) || !isRecord(body.createdBy)) {
+    return fallback;
+  }
+
+  const username = typeof body.createdBy.username === "string" ? body.createdBy.username.trim() : "";
+  const email = typeof body.createdBy.email === "string" ? body.createdBy.email.trim().toLowerCase() : "";
+
+  return {
+    username: username.length > 0 ? username : fallback.username,
+    email: email.length > 0 ? email : fallback.email
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
