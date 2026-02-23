@@ -5,7 +5,10 @@ if (!Number.isInteger(port) || port <= 0) {
 
 const databaseUrl = process.env.DATABASE_URL;
 
-const corsOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:3000,http://localhost:3001")
+const corsOrigins = (
+  process.env.CORS_ORIGINS ??
+  "http://localhost:3000,http://localhost:3001,https://cutting-materials-web.vercel.app"
+)
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);

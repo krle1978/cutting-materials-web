@@ -32,7 +32,7 @@ API (`apps/api/.env`):
 ```env
 PORT=4000
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/cutting_materials
-CORS_ORIGINS=http://localhost:3000
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001,https://cutting-materials-web.vercel.app
 ```
 
 Web (`apps/web/.env.local`):
@@ -52,7 +52,7 @@ NEXT_PUBLIC_API_URL=http://localhost:4000
    - Start: `npm run start:api`
 4. Podesi env:
    - `DATABASE_URL` iz Render Postgres servisa
-   - `CORS_ORIGINS` na Vercel URL frontend-a
+   - `CORS_ORIGINS` na Vercel URL frontend-a (npr. `https://cutting-materials-web.vercel.app`)
 
 Alternativa: koristi `infra/render.yaml` kao Blueprint.
 
@@ -62,6 +62,8 @@ Alternativa: koristi `infra/render.yaml` kao Blueprint.
 2. Root Directory: `apps/web`
 3. Env var:
    - `NEXT_PUBLIC_API_URL=https://<render-backend-domain>`
+
+Ako ovo nije podeÅ¡eno, frontend u produkciji neÄe koristiti `localhost`, veÄ Äe prijaviti greÅ¡ku konfiguracije API URL-a.
 
 ## API Endpoints
 

@@ -191,8 +191,23 @@ function buildAcceptedOrderMessage(order: PersistedOrder, acceptedAt: Date): str
   return `Va\u0161a potud\u017ebina\n${formatOrderForMessage(order)}\nje potvr\u0111ena.\nMo\u017eete je pokupiti od ${getPickupDateText(acceptedAt)}`;
 }
 
+function resolveApiBaseUrl(): string | null {
+  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return null;
+  }
+
+  return "http://localhost:4000";
+}
+
 export default function HomePage() {
-  const apiUrl = useMemo(() => process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000", []);
+  const apiUrl = useMemo(resolveApiBaseUrl, []);
+  const apiConfigError =
+    "API nije konfigurisan. Postavi NEXT_PUBLIC_API_URL na frontend deploy-u (Vercel).";
 
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [inventoryLengthMm, setInventoryLengthMm] = useState("");
@@ -244,6 +259,16 @@ export default function HomePage() {
     );
   }, [currentAccount, notifications]);
 
+  const fetchApi = useCallback(
+    (path: string, init?: RequestInit) => {
+      if (!apiUrl) {
+        throw new Error(apiConfigError);
+      }
+      return fetch(`${apiUrl}${path}`, init);
+    },
+    [apiConfigError, apiUrl]
+  );
+
   const inventoryByClass = useMemo(() => {
     const komarnici = inventory
       .filter((item) => item.inventoryClass === "Komarnici")
@@ -275,22 +300,22 @@ export default function HomePage() {
   }, [orderRows]);
 
   const loadInventory = useCallback(async () => {
-    const response = await fetch(`${apiUrl}/inventory`);
+    const response = await fetchApi("/inventory");
     if (!response.ok) {
       throw new Error(`Inventory fetch failed (${response.status})`);
     }
     const data = (await response.json()) as { items: InventoryItem[] };
     setInventory(data.items ?? []);
-  }, [apiUrl]);
+  }, [fetchApi]);
 
   const loadOrders = useCallback(async () => {
-    const response = await fetch(`${apiUrl}/orders`);
+    const response = await fetchApi("/orders");
     if (!response.ok) {
       throw new Error(`Orders fetch failed (${response.status})`);
     }
     const data = (await response.json()) as { items: PersistedOrder[] };
     setOrders(data.items ?? []);
-  }, [apiUrl]);
+  }, [fetchApi]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -350,6 +375,13 @@ export default function HomePage() {
   }, [canViewInventoryOrders, currentRole, loadInventory, loadOrders]);
 
   useEffect(() => {
+    if (!currentAccount || apiUrl) {
+      return;
+    }
+    setError(apiConfigError);
+  }, [apiConfigError, apiUrl, currentAccount]);
+
+  useEffect(() => {
     if (!currentRole) {
       return;
     }
@@ -383,7 +415,7 @@ export default function HomePage() {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(`${apiUrl}/inventory/add`, {
+      const response = await fetchApi("/inventory/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -481,7 +513,7 @@ export default function HomePage() {
     setError(null);
 
     try {
-      const response = await fetch(`${apiUrl}/orders`, {
+      const response = await fetchApi("/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -540,7 +572,7 @@ export default function HomePage() {
     setError(null);
 
     try {
-      const response = await fetch(`${apiUrl}/orders/${orderId}/accept`, {
+      const response = await fetchApi(`/orders/${orderId}/accept`, {
         method: "POST"
       });
 
@@ -587,7 +619,7 @@ export default function HomePage() {
     setError(null);
 
     try {
-      const response = await fetch(`${apiUrl}/orders/accept-all`, {
+      const response = await fetchApi("/orders/accept-all", {
         method: "POST"
       });
 
