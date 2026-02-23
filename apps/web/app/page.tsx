@@ -85,6 +85,7 @@ type UserNotification = {
   orderId: string;
   message: string;
   createdAt: string;
+  readAt: string | null;
 };
 
 const ACCOUNTS_STORAGE_KEY = "cutting-materials.accounts";
@@ -163,14 +164,29 @@ function isUserNotification(value: unknown): value is UserNotification {
   }
 
   const candidate = value as Partial<UserNotification>;
+  const isReadAtValid =
+    candidate.readAt === null || candidate.readAt === undefined || typeof candidate.readAt === "string";
   return (
     typeof candidate.id === "string" &&
     typeof candidate.recipientUsername === "string" &&
     typeof candidate.recipientEmail === "string" &&
     typeof candidate.orderId === "string" &&
     typeof candidate.message === "string" &&
-    typeof candidate.createdAt === "string"
+    typeof candidate.createdAt === "string" &&
+    isReadAtValid
   );
+}
+
+function normalizeNotification(notification: UserNotification): UserNotification {
+  return {
+    ...notification,
+    readAt: typeof notification.readAt === "string" && notification.readAt.length > 0 ? notification.readAt : null
+  };
+}
+
+function toDateOrderValue(iso: string): number {
+  const value = new Date(iso).getTime();
+  return Number.isNaN(value) ? 0 : value;
 }
 
 function formatOrderForMessage(order: PersistedOrder): string {
@@ -189,6 +205,15 @@ function getPickupDateText(acceptedAt: Date): string {
 
 function buildAcceptedOrderMessage(order: PersistedOrder, acceptedAt: Date): string {
   return `Va\u0161a potud\u017ebina\n${formatOrderForMessage(order)}\nje potvr\u0111ena.\nMo\u017eete je pokupiti od ${getPickupDateText(acceptedAt)}`;
+}
+
+function resolveAcceptedAtDate(order: PersistedOrder): Date {
+  const candidate = order.acceptedAt ?? order.createdAt;
+  const parsed = new Date(candidate);
+  if (Number.isNaN(parsed.getTime())) {
+    return new Date();
+  }
+  return parsed;
 }
 
 function resolveApiBaseUrl(): string | null {
@@ -241,23 +266,33 @@ export default function HomePage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [showNotificationHistory, setShowNotificationHistory] = useState(false);
+  const [refreshingMessages, setRefreshingMessages] = useState(false);
 
   const rowIdRef = useRef(1);
   const currentRole = currentAccount?.role ?? null;
   const canViewInventoryOrders = currentRole === "Owner" || currentRole === "Lager";
   const canViewOrderPlan = currentRole === "Owner" || currentRole === "Worker";
-  const inboxNotifications = useMemo(() => {
+  const accountNotifications = useMemo(() => {
     if (!currentAccount) {
       return [];
     }
     const username = normalizeIdentity(currentAccount.username);
     const email = normalizeIdentity(currentAccount.email);
-    return notifications.filter(
-      (item) =>
-        normalizeIdentity(item.recipientUsername) === username ||
-        normalizeIdentity(item.recipientEmail) === email
-    );
+    return notifications
+      .filter(
+        (item) =>
+          normalizeIdentity(item.recipientUsername) === username ||
+          normalizeIdentity(item.recipientEmail) === email
+      )
+      .sort((a, b) => toDateOrderValue(b.createdAt) - toDateOrderValue(a.createdAt));
   }, [currentAccount, notifications]);
+  const unreadNotifications = useMemo(() => {
+    return accountNotifications.filter((item) => item.readAt == null);
+  }, [accountNotifications]);
+  const notificationHistory = useMemo(() => {
+    return [...accountNotifications].sort((a, b) => toDateOrderValue(a.createdAt) - toDateOrderValue(b.createdAt));
+  }, [accountNotifications]);
 
   const fetchApi = useCallback(
     (path: string, init?: RequestInit) => {
@@ -333,7 +368,7 @@ export default function HomePage() {
       const rawNotifications = window.localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
       const parsedNotifications = rawNotifications ? (JSON.parse(rawNotifications) as unknown) : [];
       const storedNotifications = Array.isArray(parsedNotifications)
-        ? parsedNotifications.filter(isUserNotification)
+        ? parsedNotifications.filter(isUserNotification).map(normalizeNotification)
         : [];
       setNotifications(storedNotifications);
     } catch {
@@ -372,6 +407,41 @@ export default function HomePage() {
 
     setInventory([]);
     setOrders([]);
+  }, [canViewInventoryOrders, currentRole, loadInventory, loadOrders]);
+
+  useEffect(() => {
+    if (!currentRole || !canViewInventoryOrders || typeof window === "undefined") {
+      return;
+    }
+
+    let cancelled = false;
+    const refresh = () => {
+      Promise.all([loadInventory(), loadOrders()]).catch((err: Error) => {
+        if (!cancelled) {
+          setError(err.message);
+        }
+      });
+    };
+
+    const onWindowFocus = () => {
+      refresh();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refresh();
+      }
+    };
+
+    const intervalId = window.setInterval(refresh, 8000);
+    window.addEventListener("focus", onWindowFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", onWindowFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [canViewInventoryOrders, currentRole, loadInventory, loadOrders]);
 
   useEffect(() => {
@@ -490,10 +560,91 @@ export default function HomePage() {
       recipientEmail: order.createdByEmail,
       orderId: order.id,
       message: buildAcceptedOrderMessage(order, acceptedAt),
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      readAt: null
     };
 
     setNotifications((prev) => [notification, ...prev]);
+  }
+
+  function onMarkNotificationAsRead(notificationId: string) {
+    const readAt = new Date().toISOString();
+    setNotifications((prev) =>
+      prev.map((item) => (item.id === notificationId && item.readAt == null ? { ...item, readAt } : item))
+    );
+  }
+
+  async function onRefreshWorkerMessages() {
+    if (!currentAccount) {
+      return;
+    }
+
+    setRefreshingMessages(true);
+    setError(null);
+
+    try {
+      const response = await fetchApi("/orders");
+      if (!response.ok) {
+        throw new Error(`Orders fetch failed (${response.status})`);
+      }
+
+      const data = (await response.json()) as { items?: PersistedOrder[] };
+      const backendOrders = data.items ?? [];
+      const accountUsername = normalizeIdentity(currentAccount.username);
+      const accountEmail = normalizeIdentity(currentAccount.email);
+
+      setNotifications((prev) => {
+        const existingByOrderId = new Set(
+          prev
+            .filter(
+              (item) =>
+                normalizeIdentity(item.recipientUsername) === accountUsername ||
+                normalizeIdentity(item.recipientEmail) === accountEmail
+            )
+            .map((item) => item.orderId)
+        );
+
+        const additions: UserNotification[] = [];
+        for (const order of backendOrders) {
+          if (order.status !== "ACCEPTED") {
+            continue;
+          }
+
+          const belongsToCurrentAccount =
+            normalizeIdentity(order.createdByUsername) === accountUsername ||
+            normalizeIdentity(order.createdByEmail) === accountEmail;
+          if (!belongsToCurrentAccount || existingByOrderId.has(order.id)) {
+            continue;
+          }
+
+          additions.push({
+            id:
+              typeof crypto !== "undefined" && "randomUUID" in crypto
+                ? crypto.randomUUID()
+                : `note-${order.id}-${Date.now()}`,
+            recipientUsername: order.createdByUsername,
+            recipientEmail: order.createdByEmail,
+            orderId: order.id,
+            message: buildAcceptedOrderMessage(order, resolveAcceptedAtDate(order)),
+            createdAt: order.acceptedAt ?? order.createdAt,
+            readAt: null
+          });
+        }
+
+        if (additions.length === 0) {
+          return prev;
+        }
+
+        return [
+          ...additions.sort((a, b) => toDateOrderValue(b.createdAt) - toDateOrderValue(a.createdAt)),
+          ...prev
+        ];
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      setRefreshingMessages(false);
+    }
   }
 
   async function onOrderSubmit(event: FormEvent<HTMLFormElement>) {
@@ -762,6 +913,7 @@ export default function HomePage() {
 
   function onLogout() {
     setCurrentAccount(null);
+    setShowNotificationHistory(false);
     setMainTab("InventoryOrders");
     setInventoryPanelTab("Inventory");
     setInventory([]);
@@ -911,16 +1063,57 @@ export default function HomePage() {
       </header>
 
       <section className="panel">
-        <h2>Poruke</h2>
-        {inboxNotifications.length === 0 ? (
-          <p>Nemate poruka.</p>
+        <div className="message-header">
+          <h2>Poruke</h2>
+          <div className="message-actions">
+            {currentRole === "Worker" && (
+              <button type="button" onClick={onRefreshWorkerMessages} disabled={refreshingMessages}>
+                {refreshingMessages ? "Refreshing..." : "Refresh"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowNotificationHistory((prev) => !prev)}
+              className={showNotificationHistory ? "history-toggle active" : "history-toggle"}
+            >
+              History
+            </button>
+          </div>
+        </div>
+
+        {!showNotificationHistory ? (
+          unreadNotifications.length === 0 ? (
+            <p>Nemate novih poruka.</p>
+          ) : (
+            <div className="message-list">
+              {unreadNotifications.map((notification) => (
+                <article key={notification.id} className="message-item unread">
+                  <label className="message-read-check">
+                    <input
+                      type="checkbox"
+                      onChange={() => onMarkNotificationAsRead(notification.id)}
+                      aria-label={`Oznaci poruku ${notification.orderId} kao procitanu`}
+                    />
+                  </label>
+                  <p className="message-meta">
+                    Order ID: <code>{notification.orderId}</code> |{" "}
+                    {new Date(notification.createdAt).toLocaleString("sr-RS")}
+                  </p>
+                  <p className="message-body">{notification.message}</p>
+                </article>
+              ))}
+            </div>
+          )
+        ) : notificationHistory.length === 0 ? (
+          <p>Nemate poruka u history.</p>
         ) : (
           <div className="message-list">
-            {inboxNotifications.map((notification) => (
+            {notificationHistory.map((notification) => (
               <article key={notification.id} className="message-item">
                 <p className="message-meta">
                   Order ID: <code>{notification.orderId}</code> |{" "}
-                  {new Date(notification.createdAt).toLocaleString("sr-RS")}
+                  {new Date(notification.createdAt).toLocaleString("sr-RS")} |{" "}
+                  {notification.readAt ? "Procitano" : "Neprocitano"}
                 </p>
                 <p className="message-body">{notification.message}</p>
               </article>
