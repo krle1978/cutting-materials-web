@@ -1,4 +1,5 @@
 import {
+  type AccountRole,
   type InventoryClass,
   mergePlanParams,
   orderCommitRequestSchema,
@@ -51,7 +52,9 @@ export async function registerOrdersRoutes(
       widthOnly: row.widthOnly === true,
       derivedFromWidth: row.derivedFromWidth === true,
       createdByUsername: createdBy.username,
-      createdByEmail: createdBy.email
+      createdByEmail: createdBy.email,
+      createdByRole: createdBy.role,
+      needsWorker: parsed.data.needsWorker === true
     }));
 
     const hasInvalidLength = items.some((item) => {
@@ -318,10 +321,11 @@ function resolveWidthOnly(body: unknown): boolean {
   return body.widthOnly === true;
 }
 
-function resolveOrderCreatedBy(body: unknown): { username: string; email: string } {
+function resolveOrderCreatedBy(body: unknown): { username: string; email: string; role: AccountRole } {
   const fallback = {
     username: "unknown",
-    email: "unknown@local.invalid"
+    email: "unknown@local.invalid",
+    role: "Worker" as const
   };
 
   if (!isRecord(body) || !isRecord(body.createdBy)) {
@@ -330,11 +334,20 @@ function resolveOrderCreatedBy(body: unknown): { username: string; email: string
 
   const username = typeof body.createdBy.username === "string" ? body.createdBy.username.trim() : "";
   const email = typeof body.createdBy.email === "string" ? body.createdBy.email.trim().toLowerCase() : "";
+  const role = normalizeOrderCreatedByRole(body.createdBy.role);
 
   return {
     username: username.length > 0 ? username : fallback.username,
-    email: email.length > 0 ? email : fallback.email
+    email: email.length > 0 ? email : fallback.email,
+    role
   };
+}
+
+function normalizeOrderCreatedByRole(value: unknown): AccountRole {
+  if (value === "Owner" || value === "Lager" || value === "Worker" || value === "Customer") {
+    return value;
+  }
+  return "Worker";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, resolve } from "path";
-import type { InventoryClass, InventoryItem } from "@cutting/contracts";
+import type { AccountRole, InventoryClass, InventoryItem } from "@cutting/contracts";
 import type { Allocation } from "@cutting/cutting-core";
 import { ConflictError, NotFoundError } from "../utils/errors";
 import type {
@@ -46,6 +46,8 @@ type PersistedMemoryState = {
     derivedFromWidth?: unknown;
     createdByUsername?: unknown;
     createdByEmail?: unknown;
+    createdByRole?: unknown;
+    needsWorker?: unknown;
     status?: unknown;
     createdAt?: unknown;
     acceptedAt?: unknown;
@@ -111,6 +113,8 @@ export class MemoryStore implements PlanStore {
       derivedFromWidth: entry.derivedFromWidth === true,
       createdByUsername: normalizeOrderOwnerUsername(entry.createdByUsername),
       createdByEmail: normalizeOrderOwnerEmail(entry.createdByEmail),
+      createdByRole: normalizeOrderOwnerRole(entry.createdByRole),
+      needsWorker: entry.needsWorker === true,
       status: "PENDING",
       createdAt,
       acceptedAt: null,
@@ -315,6 +319,8 @@ export class MemoryStore implements PlanStore {
         derivedFromWidth: item.derivedFromWidth === true,
         createdByUsername: normalizeOrderOwnerUsername(item.createdByUsername),
         createdByEmail: normalizeOrderOwnerEmail(item.createdByEmail),
+        createdByRole: normalizeOrderOwnerRole(item.createdByRole),
+        needsWorker: item.needsWorker === true,
         status: normalizeOrderStatus(item.status),
         createdAt: typeof item.createdAt === "string" && item.createdAt.length > 0 ? item.createdAt : new Date().toISOString(),
         acceptedAt:
@@ -406,6 +412,13 @@ function normalizeOrderOwnerEmail(value: unknown): string {
   }
   const normalized = value.trim().toLowerCase();
   return normalized.length > 0 ? normalized : "unknown@local.invalid";
+}
+
+function normalizeOrderOwnerRole(value: unknown): AccountRole {
+  if (value === "Owner" || value === "Lager" || value === "Worker" || value === "Customer") {
+    return value;
+  }
+  return "Worker";
 }
 
 function toPositiveInt(value: number): number {

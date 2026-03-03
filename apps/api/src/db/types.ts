@@ -1,4 +1,4 @@
-import type { InventoryClass, InventoryItem, PlanParams } from "@cutting/contracts";
+import type { AccountRole, InventoryClass, InventoryItem, PlanParams } from "@cutting/contracts";
 import type { CutPlanResult, OrderLineMm } from "@cutting/cutting-core";
 
 export type PlanState = "PLANNED" | "COMMITTED" | "EXPIRED";
@@ -24,6 +24,8 @@ export type CreateOrderInput = {
   derivedFromWidth: boolean;
   createdByUsername: string;
   createdByEmail: string;
+  createdByRole: AccountRole;
+  needsWorker: boolean;
 };
 
 export type OrderQueueItem = {
@@ -36,6 +38,8 @@ export type OrderQueueItem = {
   derivedFromWidth: boolean;
   createdByUsername: string;
   createdByEmail: string;
+  createdByRole: AccountRole;
+  needsWorker: boolean;
   status: OrderQueueStatus;
   createdAt: string;
   acceptedAt: string | null;

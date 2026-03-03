@@ -10,6 +10,9 @@ export const DEFAULT_PLAN_PARAMS = {
 export const unitsSchema = z.enum(["mm", "cm", "m"]);
 export type Units = z.infer<typeof unitsSchema>;
 
+export const accountRoleSchema = z.enum(["Owner", "Lager", "Worker", "Customer"]);
+export type AccountRole = z.infer<typeof accountRoleSchema>;
+
 export const planParamsSchema = z.object({
   kerfMm: z.number().int().min(0),
   allowanceMm: z.number().int().min(0),
@@ -75,13 +78,15 @@ export type OrderQueueRow = z.infer<typeof orderQueueRowSchema>;
 
 export const orderCreatedBySchema = z.object({
   username: z.string().trim().min(1),
-  email: z.string().trim().email()
+  email: z.string().trim().email(),
+  role: accountRoleSchema
 });
 export type OrderCreatedBy = z.infer<typeof orderCreatedBySchema>;
 
 export const orderQueueCreateRequestSchema = z.object({
   units: unitsSchema.default("mm"),
   createdBy: orderCreatedBySchema,
+  needsWorker: z.boolean().default(false),
   rows: z.array(orderQueueRowSchema).min(1)
 });
 export type OrderQueueCreateRequest = z.infer<typeof orderQueueCreateRequestSchema>;

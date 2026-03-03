@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
-import type { InventoryClass, InventoryItem } from "@cutting/contracts";
+import type { AccountRole, InventoryClass, InventoryItem } from "@cutting/contracts";
 import type { Allocation, CutPlanResult } from "@cutting/cutting-core";
 import { ConflictError, NotFoundError } from "../utils/errors";
 import { migrationStatements } from "./sql";
@@ -174,10 +174,12 @@ export class PostgresStore implements PlanStore {
             derived_from_width,
             created_by_username,
             created_by_email,
+            created_by_role,
+            needs_worker,
             status,
             accepted_plan_ids
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDING', '[]'::jsonb)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'PENDING', '[]'::jsonb)
           RETURNING
             id,
             inventory_class,
@@ -188,6 +190,8 @@ export class PostgresStore implements PlanStore {
             derived_from_width,
             created_by_username,
             created_by_email,
+            created_by_role,
+            needs_worker,
             status,
             created_at,
             accepted_at,
@@ -202,7 +206,9 @@ export class PostgresStore implements PlanStore {
           entry.widthOnly,
           entry.derivedFromWidth,
           entry.createdByUsername,
-          entry.createdByEmail
+          entry.createdByEmail,
+          entry.createdByRole,
+          entry.needsWorker
         ]
       );
       created.push(mapOrderRow(rows[0]));
@@ -223,6 +229,8 @@ export class PostgresStore implements PlanStore {
         derived_from_width,
         created_by_username,
         created_by_email,
+        created_by_role,
+        needs_worker,
         status,
         created_at,
         accepted_at,
@@ -247,6 +255,8 @@ export class PostgresStore implements PlanStore {
         derived_from_width,
         created_by_username,
         created_by_email,
+        created_by_role,
+        needs_worker,
         status,
         created_at,
         accepted_at,
@@ -291,6 +301,8 @@ export class PostgresStore implements PlanStore {
         derived_from_width,
         created_by_username,
         created_by_email,
+        created_by_role,
+        needs_worker,
         status,
         created_at,
         accepted_at,
@@ -317,6 +329,8 @@ type OrderRow = {
   derived_from_width: boolean;
   created_by_username: string;
   created_by_email: string;
+  created_by_role: AccountRole;
+  needs_worker: boolean;
   status: "PENDING" | "ACCEPTED";
   created_at: Date | string;
   accepted_at: Date | string | null;
@@ -376,6 +390,8 @@ function mapOrderRow(row: OrderRow): OrderQueueItem {
     derivedFromWidth: row.derived_from_width,
     createdByUsername: row.created_by_username,
     createdByEmail: row.created_by_email,
+    createdByRole: row.created_by_role,
+    needsWorker: row.needs_worker,
     status: row.status,
     createdAt: toIsoString(row.created_at),
     acceptedAt: row.accepted_at ? toIsoString(row.accepted_at) : null,

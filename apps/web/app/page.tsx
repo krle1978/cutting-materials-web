@@ -1,7 +1,27 @@
 'use client';
 
+import Link from "next/link";
 import Image from "next/image";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ACCOUNTS_STORAGE_KEY,
+  CURRENT_ACCOUNT_STORAGE_KEY,
+  DEFAULT_ACCOUNTS,
+  NOTIFICATIONS_STORAGE_KEY,
+  type AccountRole,
+  type UserAccount,
+  isUserAccount,
+  mergeWithDefaultAccounts,
+  normalizeIdentity,
+  resolveCurrentAccount
+} from "./lib/account-store";
+import {
+  getInstallationStartDateText,
+  isWorkerJobRequest,
+  normalizeWorkerJobRequest,
+  type WorkerJobRequest,
+  WORKER_JOB_REQUESTS_STORAGE_KEY
+} from "./lib/worker-job-store";
 import cuttingMaterialBanner from "./cutting_material_banner.png";
 
 type InventoryClass = "Komarnici" | "Prozorske daske";
@@ -51,6 +71,8 @@ type PersistedOrder = {
   derivedFromWidth: boolean;
   createdByUsername: string;
   createdByEmail: string;
+  createdByRole: AccountRole;
+  needsWorker: boolean;
   status: "PENDING" | "ACCEPTED";
   createdAt: string;
   acceptedAt: string | null;
@@ -66,17 +88,8 @@ type MainTab = "InventoryOrders" | "OrderPlan";
 type PanelTab = "Inventory" | "Orders";
 type OrdersStatusFilter = "ALL" | "PENDING" | "ACCEPTED";
 type OrdersClassFilter = "ALL" | InventoryClass;
-type AccountRole = "Owner" | "Lager" | "Worker";
 type AuthMode = "LOGIN" | "SIGNUP";
-
-type UserAccount = {
-  id: string;
-  username: string;
-  email: string;
-  password: string;
-  role: AccountRole;
-  createdAt: string;
-};
+type SignupRole = "Worker" | "Customer";
 
 type UserNotification = {
   id: string;
@@ -87,76 +100,6 @@ type UserNotification = {
   createdAt: string;
   readAt: string | null;
 };
-
-const ACCOUNTS_STORAGE_KEY = "cutting-materials.accounts";
-const NOTIFICATIONS_STORAGE_KEY = "cutting-materials.notifications";
-
-const DEFAULT_ACCOUNTS: UserAccount[] = [
-  {
-    id: "seed-owner",
-    username: "owner",
-    email: "owner@cutting.local",
-    password: "owner123",
-    role: "Owner",
-    createdAt: "2026-02-23T00:00:00.000Z"
-  },
-  {
-    id: "seed-lager",
-    username: "lager",
-    email: "lager@cutting.local",
-    password: "lager123",
-    role: "Lager",
-    createdAt: "2026-02-23T00:00:00.000Z"
-  },
-  {
-    id: "seed-worker",
-    username: "worker",
-    email: "worker@cutting.local",
-    password: "worker123",
-    role: "Worker",
-    createdAt: "2026-02-23T00:00:00.000Z"
-  }
-];
-
-function normalizeIdentity(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function isAccountRole(value: unknown): value is AccountRole {
-  return value === "Owner" || value === "Lager" || value === "Worker";
-}
-
-function isUserAccount(value: unknown): value is UserAccount {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const candidate = value as Partial<UserAccount>;
-  return (
-    typeof candidate.id === "string" &&
-    typeof candidate.username === "string" &&
-    typeof candidate.email === "string" &&
-    typeof candidate.password === "string" &&
-    typeof candidate.createdAt === "string" &&
-    isAccountRole(candidate.role)
-  );
-}
-
-function mergeWithDefaultAccounts(storedAccounts: UserAccount[]): UserAccount[] {
-  const existingKeys = new Set(
-    storedAccounts.map((account) => `${normalizeIdentity(account.username)}|${normalizeIdentity(account.email)}`)
-  );
-  const merged = [...storedAccounts];
-
-  for (const defaultAccount of DEFAULT_ACCOUNTS) {
-    const key = `${normalizeIdentity(defaultAccount.username)}|${normalizeIdentity(defaultAccount.email)}`;
-    if (!existingKeys.has(key)) {
-      merged.push(defaultAccount);
-    }
-  }
-
-  return merged;
-}
 
 function isUserNotification(value: unknown): value is UserNotification {
   if (!value || typeof value !== "object") {
@@ -205,6 +148,10 @@ function getPickupDateText(acceptedAt: Date): string {
 
 function buildAcceptedOrderMessage(order: PersistedOrder, acceptedAt: Date): string {
   return `Va\u0161a potud\u017ebina\n${formatOrderForMessage(order)}\nje potvr\u0111ena.\nMo\u017eete je pokupiti od ${getPickupDateText(acceptedAt)}`;
+}
+
+function buildWorkerRequestMessage(request: WorkerJobRequest): string {
+  return `Kupac: ${request.customerUsername}\nKlasa: ${request.inventoryClass}\nHeight: ${request.heightMm ?? "-"}\nWidth: ${request.widthMm}\nQty: ${request.qty}`;
 }
 
 function resolveAcceptedAtDate(order: PersistedOrder): Date {
@@ -263,16 +210,28 @@ export default function HomePage() {
   const [signupUsername, setSignupUsername] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
+  const [signupRole, setSignupRole] = useState<SignupRole>("Worker");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authInfo, setAuthInfo] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [workerJobRequests, setWorkerJobRequests] = useState<WorkerJobRequest[]>([]);
   const [showNotificationHistory, setShowNotificationHistory] = useState(false);
   const [refreshingMessages, setRefreshingMessages] = useState(false);
+  const [needsWorkerForOrder, setNeedsWorkerForOrder] = useState(false);
+  const [workerPickerOrderId, setWorkerPickerOrderId] = useState<string | null>(null);
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
 
   const rowIdRef = useRef(1);
   const currentRole = currentAccount?.role ?? null;
   const canViewInventoryOrders = currentRole === "Owner" || currentRole === "Lager";
-  const canViewOrderPlan = currentRole === "Owner" || currentRole === "Worker";
+  const canViewOrderPlan =
+    currentRole === "Owner" || currentRole === "Worker" || currentRole === "Customer";
+  const canAccessSettings = currentRole === "Owner";
+  const workerAccounts = useMemo(() => {
+    return accounts
+      .filter((account) => account.role === "Worker")
+      .sort((left, right) => left.username.localeCompare(right.username));
+  }, [accounts]);
   const accountNotifications = useMemo(() => {
     if (!currentAccount) {
       return [];
@@ -293,6 +252,35 @@ export default function HomePage() {
   const notificationHistory = useMemo(() => {
     return [...accountNotifications].sort((a, b) => toDateOrderValue(a.createdAt) - toDateOrderValue(b.createdAt));
   }, [accountNotifications]);
+  const workerJobRequestByOrderId = useMemo(() => {
+    return new Map(workerJobRequests.map((request) => [request.orderId, request]));
+  }, [workerJobRequests]);
+  const activeWorkerJobs = useMemo(() => {
+    if (!currentAccount || currentRole !== "Worker") {
+      return [];
+    }
+
+    return workerJobRequests
+      .filter((request) => {
+        const currentAssignment = request.assignments.find(
+          (assignment) => assignment.workerAccountId === currentAccount.id
+        );
+        if (!currentAssignment) {
+          return false;
+        }
+        if (request.acceptedWorkerAccountId) {
+          return request.acceptedWorkerAccountId === currentAccount.id;
+        }
+        return currentAssignment.status === "PENDING";
+      })
+      .sort((left, right) => toDateOrderValue(right.requestedAt) - toDateOrderValue(left.requestedAt));
+  }, [currentAccount, currentRole, workerJobRequests]);
+  const workerPickerOrder = useMemo(() => {
+    if (!workerPickerOrderId) {
+      return null;
+    }
+    return orders.find((order) => order.id === workerPickerOrderId) ?? null;
+  }, [orders, workerPickerOrderId]);
 
   const fetchApi = useCallback(
     (path: string, init?: RequestInit) => {
@@ -362,7 +350,9 @@ export default function HomePage() {
       const parsed = raw ? (JSON.parse(raw) as unknown) : [];
       const storedAccounts = Array.isArray(parsed) ? parsed.filter(isUserAccount) : [];
       const mergedAccounts = mergeWithDefaultAccounts(storedAccounts);
+      const storedCurrentAccountId = window.localStorage.getItem(CURRENT_ACCOUNT_STORAGE_KEY);
       setAccounts(mergedAccounts);
+      setCurrentAccount(resolveCurrentAccount(storedCurrentAccountId, mergedAccounts));
       window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(mergedAccounts));
 
       const rawNotifications = window.localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
@@ -371,11 +361,20 @@ export default function HomePage() {
         ? parsedNotifications.filter(isUserNotification).map(normalizeNotification)
         : [];
       setNotifications(storedNotifications);
+
+      const rawWorkerRequests = window.localStorage.getItem(WORKER_JOB_REQUESTS_STORAGE_KEY);
+      const parsedWorkerRequests = rawWorkerRequests ? (JSON.parse(rawWorkerRequests) as unknown) : [];
+      const storedWorkerRequests = Array.isArray(parsedWorkerRequests)
+        ? parsedWorkerRequests.filter(isWorkerJobRequest).map(normalizeWorkerJobRequest)
+        : [];
+      setWorkerJobRequests(storedWorkerRequests);
     } catch {
       setAccounts(DEFAULT_ACCOUNTS);
       window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(DEFAULT_ACCOUNTS));
       setNotifications([]);
       window.localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify([]));
+      setWorkerJobRequests([]);
+      window.localStorage.setItem(WORKER_JOB_REQUESTS_STORAGE_KEY, JSON.stringify([]));
     } finally {
       setAuthReady(true);
     }
@@ -392,8 +391,28 @@ export default function HomePage() {
     if (!authReady || typeof window === "undefined") {
       return;
     }
+
+    if (!currentAccount) {
+      window.localStorage.removeItem(CURRENT_ACCOUNT_STORAGE_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(CURRENT_ACCOUNT_STORAGE_KEY, currentAccount.id);
+  }, [authReady, currentAccount]);
+
+  useEffect(() => {
+    if (!authReady || typeof window === "undefined") {
+      return;
+    }
     window.localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify(notifications));
   }, [authReady, notifications]);
+
+  useEffect(() => {
+    if (!authReady || typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(WORKER_JOB_REQUESTS_STORAGE_KEY, JSON.stringify(workerJobRequests));
+  }, [authReady, workerJobRequests]);
 
   useEffect(() => {
     if (!currentRole) {
@@ -456,6 +475,10 @@ export default function HomePage() {
       return;
     }
 
+    if (!canViewInventoryOrders && !canViewOrderPlan) {
+      return;
+    }
+
     if (!canViewInventoryOrders && mainTab !== "OrderPlan") {
       setMainTab("OrderPlan");
       return;
@@ -472,6 +495,12 @@ export default function HomePage() {
       setOrderHeight("");
     }
   }, [orderClass]);
+
+  useEffect(() => {
+    if (currentRole !== "Customer") {
+      setNeedsWorkerForOrder(false);
+    }
+  }, [currentRole]);
 
   async function onAddInventory(inventoryClass: InventoryClass) {
     const lengthMm = Number(inventoryLengthMm);
@@ -551,6 +580,168 @@ export default function HomePage() {
 
   function onRemoveOrderRow(row: OrderTableRow) {
     setOrderRows((prev) => prev.filter((entry) => entry.id !== row.id));
+  }
+
+  function createWorkerAssignments(targetWorkers: UserAccount[]) {
+    return targetWorkers.map((worker) => ({
+      workerAccountId: worker.id,
+      workerUsername: worker.username,
+      workerEmail: worker.email,
+      status: "PENDING" as const,
+      respondedAt: null
+    }));
+  }
+
+  function upsertWorkerRequest(
+    existingRequests: WorkerJobRequest[],
+    order: PersistedOrder,
+    targetWorkers: UserAccount[],
+    orderAcceptedAt: string | null
+  ): WorkerJobRequest[] {
+    if (targetWorkers.length === 0) {
+      return existingRequests;
+    }
+
+    const existing = existingRequests.find((request) => request.orderId === order.id);
+    const nextRequest: WorkerJobRequest = {
+      id: existing?.id ?? (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `job-${order.id}`),
+      orderId: order.id,
+      inventoryClass: order.inventoryClass,
+      heightMm: order.heightMm,
+      widthMm: order.widthMm,
+      qty: order.qty,
+      customerUsername: order.createdByUsername,
+      customerEmail: order.createdByEmail,
+      requestedAt: existing?.requestedAt ?? new Date().toISOString(),
+      orderAcceptedAt: orderAcceptedAt ?? existing?.orderAcceptedAt ?? null,
+      acceptedWorkerAccountId: existing?.acceptedWorkerAccountId ?? null,
+      acceptedWorkerUsername: existing?.acceptedWorkerUsername ?? null,
+      assignments:
+        existing?.acceptedWorkerAccountId != null
+          ? existing.assignments
+          : createWorkerAssignments(targetWorkers)
+    };
+
+    if (!existing) {
+      return [nextRequest, ...existingRequests];
+    }
+
+    return existingRequests.map((request) => (request.orderId === order.id ? nextRequest : request));
+  }
+
+  function ensureWorkerRequestsForAcceptedOrders(
+    existingRequests: WorkerJobRequest[],
+    acceptedOrders: PersistedOrder[]
+  ): WorkerJobRequest[] {
+    let nextRequests = existingRequests;
+
+    for (const order of acceptedOrders) {
+      if (order.createdByRole !== "Customer" || !order.needsWorker) {
+        continue;
+      }
+
+      const existing = nextRequests.find((request) => request.orderId === order.id);
+      const targetWorkerIds =
+        existing?.assignments.map((assignment) => assignment.workerAccountId) ??
+        workerAccounts.map((worker) => worker.id);
+      const targetWorkers = workerAccounts.filter((worker) => targetWorkerIds.includes(worker.id));
+      nextRequests = upsertWorkerRequest(nextRequests, order, targetWorkers, order.acceptedAt);
+    }
+
+    return nextRequests;
+  }
+
+  function openWorkerPicker(order: PersistedOrder) {
+    const existing = workerJobRequestByOrderId.get(order.id);
+    setWorkerPickerOrderId(order.id);
+    setSelectedWorkerIds(existing?.assignments.map((assignment) => assignment.workerAccountId) ?? []);
+  }
+
+  function closeWorkerPicker() {
+    setWorkerPickerOrderId(null);
+    setSelectedWorkerIds([]);
+  }
+
+  function onToggleWorkerForRequest(workerId: string) {
+    setSelectedWorkerIds((prev) =>
+      prev.includes(workerId) ? prev.filter((currentId) => currentId !== workerId) : [...prev, workerId]
+    );
+  }
+
+  function onSendWorkerRequest() {
+    if (!workerPickerOrder) {
+      return;
+    }
+
+    const targetWorkers = workerAccounts.filter((worker) => selectedWorkerIds.includes(worker.id));
+    if (targetWorkers.length === 0) {
+      setError("Izaberi bar jednog Workera.");
+      return;
+    }
+
+    setWorkerJobRequests((prev) =>
+      upsertWorkerRequest(prev, workerPickerOrder, targetWorkers, workerPickerOrder.acceptedAt)
+    );
+    setError(null);
+    closeWorkerPicker();
+  }
+
+  function onWorkerAcceptJob(requestId: string) {
+    if (!currentAccount || currentRole !== "Worker") {
+      return;
+    }
+
+    const respondedAt = new Date().toISOString();
+    setWorkerJobRequests((prev) =>
+      prev.map((request) => {
+        if (request.id !== requestId || request.acceptedWorkerAccountId) {
+          return request;
+        }
+
+        return {
+          ...request,
+          acceptedWorkerAccountId: currentAccount.id,
+          acceptedWorkerUsername: currentAccount.username,
+          assignments: request.assignments.map((assignment) =>
+            assignment.workerAccountId === currentAccount.id
+              ? {
+                  ...assignment,
+                  status: "ACCEPTED",
+                  respondedAt
+                }
+              : assignment
+          )
+        };
+      })
+    );
+  }
+
+  function onWorkerRejectJob(requestId: string) {
+    if (!currentAccount || currentRole !== "Worker") {
+      return;
+    }
+
+    const respondedAt = new Date().toISOString();
+    setWorkerJobRequests((prev) =>
+      prev.map((request) => {
+        if (request.id !== requestId || request.acceptedWorkerAccountId) {
+          return request;
+        }
+
+        return {
+          ...request,
+          assignments: request.assignments.map((assignment) =>
+            assignment.workerAccountId === currentAccount.id
+              ? {
+                  ...assignment,
+                  status: "REJECTED",
+                  respondedAt
+                }
+              : assignment
+          )
+        };
+      })
+    );
   }
 
   function pushOrderAcceptedNotification(order: PersistedOrder, acceptedAt: Date) {
@@ -671,8 +862,10 @@ export default function HomePage() {
           units,
           createdBy: {
             username: currentAccount.username,
-            email: currentAccount.email
+            email: currentAccount.email,
+            role: currentAccount.role
           },
+          needsWorker: currentAccount.role === "Customer" && needsWorkerForOrder,
           rows: orderRows.flatMap((row) => {
             const baseRow = {
               inventoryClass: row.inventoryClass,
@@ -709,6 +902,7 @@ export default function HomePage() {
 
       setOrders(data.items ?? []);
       setOrderRows([]);
+      setNeedsWorkerForOrder(false);
       setInventoryPanelTab("Orders");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
@@ -756,6 +950,7 @@ export default function HomePage() {
       }
       if (data.status === "ACCEPTED" && data.order) {
         pushOrderAcceptedNotification(data.order, acceptedAt);
+        setWorkerJobRequests((prev) => ensureWorkerRequestsForAcceptedOrders(prev, [data.order!]));
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unexpected error");
@@ -813,6 +1008,15 @@ export default function HomePage() {
         }
       }
 
+      const acceptedOrders = (data.results ?? [])
+        .filter((item): item is { orderId: string; status: "ACCEPTED"; order: PersistedOrder; plan?: PlanResponse } =>
+          item.status === "ACCEPTED" && item.order != null
+        )
+        .map((item) => item.order);
+      if (acceptedOrders.length > 0) {
+        setWorkerJobRequests((prev) => ensureWorkerRequestsForAcceptedOrders(prev, acceptedOrders));
+      }
+
       if (acceptedPlans.length > 0) {
         setExecutedPlans((prev) => [...acceptedPlans, ...prev]);
       }
@@ -847,7 +1051,7 @@ export default function HomePage() {
     }
 
     setCurrentAccount(account);
-    setMainTab(account.role === "Worker" ? "OrderPlan" : "InventoryOrders");
+    setMainTab(account.role === "Owner" || account.role === "Lager" ? "InventoryOrders" : "OrderPlan");
     setInventoryPanelTab("Inventory");
     setError(null);
     setAuthError(null);
@@ -891,11 +1095,14 @@ export default function HomePage() {
     }
 
     const newAccount: UserAccount = {
-      id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `worker-${Date.now()}`,
+      id:
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${signupRole.toLowerCase()}-${Date.now()}`,
       username,
       email,
       password,
-      role: "Worker",
+      role: signupRole,
       createdAt: new Date().toISOString()
     };
 
@@ -905,10 +1112,11 @@ export default function HomePage() {
     setInventoryPanelTab("Inventory");
     setError(null);
     setAuthError(null);
-    setAuthInfo("Worker nalog je uspesno kreiran.");
+    setAuthInfo(`${signupRole} nalog je uspesno kreiran.`);
     setSignupUsername("");
     setSignupEmail("");
     setSignupPassword("");
+    setSignupRole("Worker");
   }
 
   function onLogout() {
@@ -920,6 +1128,8 @@ export default function HomePage() {
     setOrders([]);
     setOrderRows([]);
     setExecutedPlans([]);
+    setNeedsWorkerForOrder(false);
+    closeWorkerPicker();
     setError(null);
     setAuthError(null);
     setAuthInfo(null);
@@ -991,6 +1201,27 @@ export default function HomePage() {
             </form>
           ) : (
             <form className="auth-form" onSubmit={onSignupSubmit}>
+              <fieldset className="auth-role-picker">
+                <legend>Account Type</legend>
+                <label className="radio-inline">
+                  <input
+                    type="radio"
+                    name="signup-role"
+                    checked={signupRole === "Worker"}
+                    onChange={() => setSignupRole("Worker")}
+                  />
+                  Worker
+                </label>
+                <label className="radio-inline">
+                  <input
+                    type="radio"
+                    name="signup-role"
+                    checked={signupRole === "Customer"}
+                    onChange={() => setSignupRole("Customer")}
+                  />
+                  Customer
+                </label>
+              </fieldset>
               <label>
                 Username
                 <input
@@ -1015,8 +1246,8 @@ export default function HomePage() {
                   onChange={(event) => setSignupPassword(event.target.value)}
                 />
               </label>
-              <p className="auth-note">Signup kreira samo Worker nalog.</p>
-              <button type="submit">Signup as Worker</button>
+              <p className="auth-note">Izaberi da li se kreira Worker ili Customer nalog.</p>
+              <button type="submit">Signup</button>
             </form>
           )}
 
@@ -1061,6 +1292,69 @@ export default function HomePage() {
           </p>
         </div>
       </header>
+
+      {canAccessSettings && (
+        <section className="panel">
+          <div className="message-header">
+            <h2>Settings</h2>
+          </div>
+          <div className="settings-actions">
+            <Link href="/settings/my-account" className="button-link">
+              My Account
+            </Link>
+            <Link href="/settings/account-manager" className="button-link">
+              Account Manager
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {currentRole === "Worker" && (
+        <section className="panel">
+          <div className="message-header">
+            <h2>Worker Requests</h2>
+          </div>
+
+          {activeWorkerJobs.length === 0 ? (
+            <p>Nemate aktivnih zahteva za montazu.</p>
+          ) : (
+            <div className="message-list">
+              {activeWorkerJobs.map((request) => {
+                const installationStartDate = getInstallationStartDateText(request.orderAcceptedAt);
+                const isAssignedToCurrentWorker = request.acceptedWorkerAccountId === currentAccount.id;
+
+                return (
+                  <article key={request.id} className={`message-item ${isAssignedToCurrentWorker ? "assigned-job" : ""}`}>
+                    <p className="message-meta">
+                      Order ID: <code>{request.orderId}</code> | Kupac: {request.customerUsername} |{" "}
+                      {new Date(request.requestedAt).toLocaleString("sr-RS")}
+                    </p>
+                    <p className="message-body">{buildWorkerRequestMessage(request)}</p>
+
+                    {isAssignedToCurrentWorker ? (
+                      <p className="worker-job-status">
+                        Prihvacen posao.
+                        {installationStartDate
+                          ? ` Pocetak rada: ${installationStartDate}.`
+                          : " Pocetak rada ce biti poznat nakon sto Owner ili Lager prihvati porudzbinu."}
+                      </p>
+                    ) : (
+                      <div className="worker-job-actions">
+                        <button type="button" onClick={() => onWorkerAcceptJob(request.id)}>
+                          Accept
+                        </button>
+                        <button type="button" onClick={() => onWorkerRejectJob(request.id)}>
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="panel">
         <div className="message-header">
@@ -1296,6 +1590,9 @@ export default function HomePage() {
                   <thead>
                     <tr>
                       <th>User</th>
+                      <th>Role</th>
+                      <th>Need Worker</th>
+                      <th>Worker</th>
                       <th>Klasa</th>
                       {showOrdersHeightColumn && <th>Height</th>}
                       <th>Width</th>
@@ -1304,24 +1601,44 @@ export default function HomePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredOrders.map((order) => (
-                      <tr key={order.id}>
-                        <td>{order.createdByUsername || order.createdByEmail || "-"}</td>
-                        <td>{order.inventoryClass}</td>
-                        {showOrdersHeightColumn && <td>{order.heightMm ?? "-"}</td>}
-                        <td>{order.widthMm}</td>
-                        <td>{order.qty}</td>
-                        <td>
-                          {order.status === "PENDING" ? (
-                            <button type="button" disabled={busy} onClick={() => onAcceptOrder(order.id)}>
-                              Accept
-                            </button>
-                          ) : (
-                            <span>Accepted</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredOrders.map((order) => {
+                      const workerRequest = workerJobRequestByOrderId.get(order.id);
+                      const canManageWorker = order.createdByRole === "Customer" && order.needsWorker;
+                      const workerLabel = workerRequest?.acceptedWorkerUsername
+                        ? workerRequest.acceptedWorkerUsername
+                        : workerRequest && workerRequest.assignments.length > 0
+                          ? `Poslato: ${workerRequest.assignments.map((assignment) => assignment.workerUsername).join(", ")}`
+                          : "-";
+
+                      return (
+                        <tr key={order.id}>
+                          <td>{order.createdByUsername || order.createdByEmail || "-"}</td>
+                          <td>{order.createdByRole}</td>
+                          <td>{order.needsWorker ? "Da" : "Ne"}</td>
+                          <td>{workerLabel}</td>
+                          <td>{order.inventoryClass}</td>
+                          {showOrdersHeightColumn && <td>{order.heightMm ?? "-"}</td>}
+                          <td>{order.widthMm}</td>
+                          <td>{order.qty}</td>
+                          <td>
+                            <div className="table-actions">
+                              {canManageWorker && !workerRequest?.acceptedWorkerUsername && (
+                                <button type="button" disabled={busy} onClick={() => openWorkerPicker(order)}>
+                                  Get a Worker
+                                </button>
+                              )}
+                              {order.status === "PENDING" ? (
+                                <button type="button" disabled={busy} onClick={() => onAcceptOrder(order.id)}>
+                                  Accept
+                                </button>
+                              ) : (
+                                <span>{workerRequest?.acceptedWorkerUsername ?? "Accepted"}</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1399,6 +1716,17 @@ export default function HomePage() {
                 onChange={(event) => setIncludeProzorskeDaskeWidths(event.target.checked)}
               />
               Prozorske Daske
+            </label>
+          )}
+
+          {currentRole === "Customer" && (
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={needsWorkerForOrder}
+                onChange={(event) => setNeedsWorkerForOrder(event.target.checked)}
+              />
+              I need a Worker
             </label>
           )}
 
@@ -1480,6 +1808,50 @@ export default function HomePage() {
             <p>Prihvati porudzbinu da vidis rezultat krojenja.</p>
           )}
         </section>
+      )}
+
+      {workerPickerOrder && (
+        <div className="modal-backdrop" role="presentation" onClick={closeWorkerPicker}>
+          <section
+            className="modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Get a Worker"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>Get a Worker</h2>
+            <p className="message-meta">
+              Order ID: <code>{workerPickerOrder.id}</code> | Kupac: {workerPickerOrder.createdByUsername}
+            </p>
+            <p className="message-body">{formatOrderForMessage(workerPickerOrder)}</p>
+            {workerAccounts.length === 0 ? (
+              <p>Nema registrovanih Workera.</p>
+            ) : (
+              <div className="worker-picker-list">
+                {workerAccounts.map((worker) => (
+                  <label key={worker.id} className="worker-picker-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedWorkerIds.includes(worker.id)}
+                      onChange={() => onToggleWorkerForRequest(worker.id)}
+                    />
+                    <span>
+                      {worker.username} <small>({worker.email})</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="modal-actions">
+              <button type="button" onClick={onSendWorkerRequest} disabled={workerAccounts.length === 0}>
+                Send Message
+              </button>
+              <button type="button" onClick={closeWorkerPicker}>
+                Cancel
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {error && <p className="error">{error}</p>}
