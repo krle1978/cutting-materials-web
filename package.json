@@ -10,7 +10,9 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c green,blue \"npm run dev:api\" \"npm run dev:web\"",
+    "dev": "concurrently -n contracts,core,api,web -c yellow,magenta,green,blue \"npm run dev:contracts\" \"npm run dev:core\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:contracts": "npm run dev --workspace @cutting/contracts",
+    "dev:core": "npm run dev --workspace @cutting/cutting-core",
     "dev:api": "npm run dev --workspace @cutting/api",
     "dev:web": "npm run dev --workspace @cutting/web",
     "build": "npm run build --workspace @cutting/contracts && npm run build --workspace @cutting/cutting-core && npm run build --workspace @cutting/api && npm run build --workspace @cutting/web",

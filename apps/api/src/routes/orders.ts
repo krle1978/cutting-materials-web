@@ -1,5 +1,4 @@
 import {
-  type AccountRole,
   type InventoryClass,
   mergePlanParams,
   orderCommitRequestSchema,
@@ -43,7 +42,7 @@ export async function registerOrdersRoutes(
       };
     }
 
-    const createdBy = resolveOrderCreatedBy(request.body);
+    const createdBy = parsed.data.createdBy;
     const items = parsed.data.rows.map((row) => ({
       inventoryClass: row.inventoryClass,
       heightMm: row.height == null ? null : toMillimeters(row.height, parsed.data.units),
@@ -319,35 +318,6 @@ function resolveWidthOnly(body: unknown): boolean {
     return false;
   }
   return body.widthOnly === true;
-}
-
-function resolveOrderCreatedBy(body: unknown): { username: string; email: string; role: AccountRole } {
-  const fallback = {
-    username: "unknown",
-    email: "unknown@local.invalid",
-    role: "Worker" as const
-  };
-
-  if (!isRecord(body) || !isRecord(body.createdBy)) {
-    return fallback;
-  }
-
-  const username = typeof body.createdBy.username === "string" ? body.createdBy.username.trim() : "";
-  const email = typeof body.createdBy.email === "string" ? body.createdBy.email.trim().toLowerCase() : "";
-  const role = normalizeOrderCreatedByRole(body.createdBy.role);
-
-  return {
-    username: username.length > 0 ? username : fallback.username,
-    email: email.length > 0 ? email : fallback.email,
-    role
-  };
-}
-
-function normalizeOrderCreatedByRole(value: unknown): AccountRole {
-  if (value === "Owner" || value === "Lager" || value === "Worker" || value === "Customer") {
-    return value;
-  }
-  return "Worker";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

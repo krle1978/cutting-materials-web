@@ -59,6 +59,7 @@ type OrderTableRow = {
   widthMm: number;
   qty: number;
   includeProzorskeDaske: boolean;
+  needsWorker: boolean;
 };
 
 type PersistedOrder = {
@@ -222,6 +223,7 @@ export default function HomePage() {
   const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>([]);
 
   const rowIdRef = useRef(1);
+  const needsWorkerForOrderRef = useRef(false);
   const currentRole = currentAccount?.role ?? null;
   const canViewInventoryOrders = currentRole === "Owner" || currentRole === "Lager";
   const canViewOrderPlan =
@@ -502,6 +504,14 @@ export default function HomePage() {
     }
   }, [currentRole]);
 
+  useEffect(() => {
+    if (!canViewInventoryOrders) {
+      return;
+    }
+
+    setInventoryPanelTab(getDefaultInventoryPanelTab(currentRole));
+  }, [canViewInventoryOrders, currentRole]);
+
   async function onAddInventory(inventoryClass: InventoryClass) {
     const lengthMm = Number(inventoryLengthMm);
     const qty = Number(inventoryQty);
@@ -567,7 +577,8 @@ export default function HomePage() {
         heightMm,
         widthMm,
         qty,
-        includeProzorskeDaske: orderClass === "Komarnici" && includeProzorskeDaskeWidths
+        includeProzorskeDaske: orderClass === "Komarnici" && includeProzorskeDaskeWidths,
+        needsWorker: currentRole === "Customer" && needsWorkerForOrder
       }
     ];
 
@@ -580,6 +591,35 @@ export default function HomePage() {
 
   function onRemoveOrderRow(row: OrderTableRow) {
     setOrderRows((prev) => prev.filter((entry) => entry.id !== row.id));
+  }
+
+  function resetOrderPlanDraft() {
+    setUnits("mm");
+    setOrderClass("Komarnici");
+    setOrderHeight("");
+    setOrderWidth("");
+    setOrderQty("1");
+    setIncludeProzorskeDaskeWidths(false);
+    setNeedsWorkerForOrder(false);
+    needsWorkerForOrderRef.current = false;
+    setOrderRows([]);
+    setError(null);
+  }
+
+  function onCustomerNeedsWorkerChange(checked: boolean) {
+    needsWorkerForOrderRef.current = checked;
+    setNeedsWorkerForOrder(checked);
+    setOrderRows((prev) => prev.map((row) => ({ ...row, needsWorker: checked })));
+  }
+
+  function getDefaultInventoryPanelTab(role: AccountRole | null): PanelTab {
+    return role === "Owner" || role === "Lager" ? "Orders" : "Inventory";
+  }
+
+  function reloadPage() {
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
   }
 
   function createWorkerAssignments(targetWorkers: UserAccount[]) {
@@ -855,6 +895,10 @@ export default function HomePage() {
     setError(null);
 
     try {
+      const effectiveNeedsWorker =
+        currentAccount.role === "Customer" &&
+        (needsWorkerForOrderRef.current || orderRows.some((row) => row.needsWorker));
+
       const response = await fetchApi("/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -865,7 +909,7 @@ export default function HomePage() {
             email: currentAccount.email,
             role: currentAccount.role
           },
-          needsWorker: currentAccount.role === "Customer" && needsWorkerForOrder,
+          needsWorker: effectiveNeedsWorker,
           rows: orderRows.flatMap((row) => {
             const baseRow = {
               inventoryClass: row.inventoryClass,
@@ -1050,14 +1094,18 @@ export default function HomePage() {
       return;
     }
 
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(CURRENT_ACCOUNT_STORAGE_KEY, account.id);
+    }
     setCurrentAccount(account);
+    resetOrderPlanDraft();
     setMainTab(account.role === "Owner" || account.role === "Lager" ? "InventoryOrders" : "OrderPlan");
-    setInventoryPanelTab("Inventory");
-    setError(null);
+    setInventoryPanelTab(getDefaultInventoryPanelTab(account.role));
     setAuthError(null);
     setAuthInfo(null);
     setLoginIdentity("");
     setLoginPassword("");
+    reloadPage();
   }
 
   function onSignupSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1106,24 +1154,33 @@ export default function HomePage() {
       createdAt: new Date().toISOString()
     };
 
-    setAccounts((prev) => [...prev, newAccount]);
+    const nextAccounts = [...accounts, newAccount];
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(nextAccounts));
+      window.localStorage.setItem(CURRENT_ACCOUNT_STORAGE_KEY, newAccount.id);
+    }
+    setAccounts(nextAccounts);
     setCurrentAccount(newAccount);
+    resetOrderPlanDraft();
     setMainTab("OrderPlan");
-    setInventoryPanelTab("Inventory");
-    setError(null);
+    setInventoryPanelTab(getDefaultInventoryPanelTab(newAccount.role));
     setAuthError(null);
     setAuthInfo(`${signupRole} nalog je uspesno kreiran.`);
     setSignupUsername("");
     setSignupEmail("");
     setSignupPassword("");
     setSignupRole("Worker");
+    reloadPage();
   }
 
   function onLogout() {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(CURRENT_ACCOUNT_STORAGE_KEY);
+    }
     setCurrentAccount(null);
     setShowNotificationHistory(false);
     setMainTab("InventoryOrders");
-    setInventoryPanelTab("Inventory");
+    setInventoryPanelTab(getDefaultInventoryPanelTab(null));
     setInventory([]);
     setOrders([]);
     setOrderRows([]);
@@ -1136,6 +1193,7 @@ export default function HomePage() {
     setLoginIdentity("");
     setLoginPassword("");
     setBusy(false);
+    reloadPage();
   }
 
   if (!authReady) {
@@ -1614,7 +1672,17 @@ export default function HomePage() {
                         <tr key={order.id}>
                           <td>{order.createdByUsername || order.createdByEmail || "-"}</td>
                           <td>{order.createdByRole}</td>
-                          <td>{order.needsWorker ? "Da" : "Ne"}</td>
+                          <td>
+                            {canManageWorker && !workerRequest?.acceptedWorkerUsername ? (
+                              <button type="button" disabled={busy} onClick={() => openWorkerPicker(order)}>
+                                Get a Worker
+                              </button>
+                            ) : order.needsWorker ? (
+                              "Da"
+                            ) : (
+                              "Ne"
+                            )}
+                          </td>
                           <td>{workerLabel}</td>
                           <td>{order.inventoryClass}</td>
                           {showOrdersHeightColumn && <td>{order.heightMm ?? "-"}</td>}
@@ -1622,11 +1690,6 @@ export default function HomePage() {
                           <td>{order.qty}</td>
                           <td>
                             <div className="table-actions">
-                              {canManageWorker && !workerRequest?.acceptedWorkerUsername && (
-                                <button type="button" disabled={busy} onClick={() => openWorkerPicker(order)}>
-                                  Get a Worker
-                                </button>
-                              )}
                               {order.status === "PENDING" ? (
                                 <button type="button" disabled={busy} onClick={() => onAcceptOrder(order.id)}>
                                   Accept
@@ -1724,7 +1787,7 @@ export default function HomePage() {
               <input
                 type="checkbox"
                 checked={needsWorkerForOrder}
-                onChange={(event) => setNeedsWorkerForOrder(event.target.checked)}
+                onChange={(event) => onCustomerNeedsWorkerChange(event.target.checked)}
               />
               I need a Worker
             </label>

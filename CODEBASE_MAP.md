@@ -15,12 +15,20 @@ Ovaj fajl je brzi indeks projekta za lakse snalazenje i brze izmene.
 ### Frontend
 
 - `apps/web/app/page.tsx`
-  - Glavna UI logika (inventory, orders, auth, notifications, plan result)
+  - Glavna UI logika (inventory, orders, auth, notifications, worker requests, plan result)
   - Pozivi API-ja (`/inventory`, `/orders`, `/orders/:id/accept`, `/orders/accept-all`)
 - `apps/web/app/globals.css`
   - Stilovi UI-ja
 - `apps/web/app/layout.tsx`
   - Root layout
+- `apps/web/app/lib/account-store.ts`
+  - Shared account/session localStorage helper
+- `apps/web/app/lib/worker-job-store.ts`
+  - LocalStorage model za worker assignment requestove
+- `apps/web/app/settings/my-account/page.tsx`
+  - Owner account detalji
+- `apps/web/app/settings/account-manager/page.tsx`
+  - Pregled naloga po rolama
 
 ### Backend API
 
@@ -48,6 +56,7 @@ Ovaj fajl je brzi indeks projekta za lakse snalazenje i brze izmene.
   - Plan commit, inventory update, remnants, order queue status
 - `apps/api/src/db/memory-store.ts`
   - In-memory varijanta za lokalni razvoj bez Postgres-a
+  - Persistuje stanje u `apps/api/.data/memory-store.json`
 - `apps/api/src/db/sql.ts`
   - SQL migracije
 
@@ -81,6 +90,7 @@ rg "DATABASE_URL|NEXT_PUBLIC_API_URL|CORS_ORIGINS" -g "*.ts" -g "*.tsx" -g "*.md
   1. `packages/contracts/src/index.ts`
   2. `apps/api/src/routes/*.ts`
   3. `apps/web/app/page.tsx`
+  4. Ako API koristi workspace `dist`, rebuild/watch za shared pakete
 - Promena algoritma secenja:
   1. `packages/cutting-core/src/index.ts`
   2. `packages/cutting-core/tests/buildCutPlanBFD.test.ts`
@@ -97,9 +107,12 @@ Iz root-a:
 npm ci
 npm run build
 npm run test
-npm run dev:api
-npm run dev:web
+npm run dev
 ```
+
+Napomena:
+- `npm run dev` sada paralelno pokrece watch za `@cutting/contracts`, `@cutting/cutting-core`, API i web
+- Ovo je bitno jer API runtime cita `packages/*/dist`, pa zastareo `dist` moze da sakrije nova schema polja
 
 ## 6) Env reference
 
@@ -113,24 +126,24 @@ Napomena: linije su tacne u trenutnom stanju i mogu da se pomere nakon izmena.
 
 ### Frontend hotspots (`apps/web/app/page.tsx`)
 
-- `resolveApiBaseUrl` - linija 219
-- `loadInventory` - linija 337
-- `loadOrders` - linija 346
-- `onAddInventory` - linija 476
-- `onAddOrderRow` - linija 511
-- `onRefreshWorkerMessages` - linija 577
-- `onOrderSubmit` - linija 650
-- `onAcceptOrder` - linija 720
-- `onAcceptAll` - linija 767
+- `resolveApiBaseUrl`
+- `loadInventory`
+- `loadOrders`
+- `onAddInventory`
+- `onAddOrderRow`
+- `onCustomerNeedsWorkerChange`
+- `onRefreshWorkerMessages`
+- `onOrderSubmit`
+- `onAcceptOrder`
+- `onAcceptAll`
 
 ### API hotspots (`apps/api/src/routes/orders.ts`)
 
-- `registerOrdersRoutes` - linija 25
-- `acceptStoredOrder` - linija 242
-- `resolveInventoryClass` - linija 303
-- `resolveWidthOnly` - linija 314
-- `resolveOrderCreatedBy` - linija 321
-- `expandOrderWidthsToPieces` - linija 344
+- `registerOrdersRoutes`
+- `acceptStoredOrder`
+- `resolveInventoryClass`
+- `resolveWidthOnly`
+- `expandOrderWidthsToPieces`
 
 ### Algoritam hotspots (`packages/cutting-core/src/index.ts`)
 
@@ -143,11 +156,12 @@ Napomena: linije su tacne u trenutnom stanju i mogu da se pomere nakon izmena.
 
 ### Contracts hotspots (`packages/contracts/src/index.ts`)
 
-- `inventoryAddRequestSchema` - linija 40
-- `orderPlanRequestSchema` - linija 54
-- `orderCommitRequestSchema` - linija 61
-- `orderQueueCreateRequestSchema` - linija 82
-- `mergePlanParams` - linija 102
+- `accountRoleSchema`
+- `inventoryAddRequestSchema`
+- `orderPlanRequestSchema`
+- `orderCommitRequestSchema`
+- `orderQueueCreateRequestSchema`
+- `mergePlanParams`
 
 ### Brzo osvezavanje linija
 
