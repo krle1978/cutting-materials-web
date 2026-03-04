@@ -13,6 +13,24 @@ export type Units = z.infer<typeof unitsSchema>;
 export const accountRoleSchema = z.enum(["Owner", "Lager", "Worker", "Customer"]);
 export type AccountRole = z.infer<typeof accountRoleSchema>;
 
+export const userAccountSchema = z.object({
+  id: z.string().min(1),
+  username: z.string().trim().min(1),
+  email: z.string().trim().email(),
+  password: z.string().min(4),
+  role: accountRoleSchema,
+  createdAt: z.string().min(1)
+});
+export type UserAccount = z.infer<typeof userAccountSchema>;
+
+export const createAccountRequestSchema = z.object({
+  username: z.string().trim().min(1),
+  email: z.string().trim().email(),
+  password: z.string().min(4),
+  role: z.enum(["Worker", "Customer"])
+});
+export type CreateAccountRequest = z.infer<typeof createAccountRequestSchema>;
+
 export const planParamsSchema = z.object({
   kerfMm: z.number().int().min(0),
   allowanceMm: z.number().int().min(0),

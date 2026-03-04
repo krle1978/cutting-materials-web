@@ -1,5 +1,31 @@
 export const migrationStatements = [
   `
+    CREATE TABLE IF NOT EXISTS accounts (
+      id UUID PRIMARY KEY,
+      username TEXT NOT NULL,
+      email TEXT NOT NULL,
+      password TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('Owner', 'Lager', 'Worker', 'Customer')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS accounts_username_uniq
+    ON accounts ((LOWER(TRIM(username))));
+  `,
+  `
+    CREATE UNIQUE INDEX IF NOT EXISTS accounts_email_uniq
+    ON accounts ((LOWER(TRIM(email))));
+  `,
+  `
+    INSERT INTO accounts (id, username, email, password, role, created_at)
+    VALUES
+      ('00000000-0000-0000-0000-000000000001', 'owner', 'owner@cutting.local', 'owner123', 'Owner', '2026-02-23T00:00:00.000Z'),
+      ('00000000-0000-0000-0000-000000000002', 'lager', 'lager@cutting.local', 'lager123', 'Lager', '2026-02-23T00:00:00.000Z'),
+      ('00000000-0000-0000-0000-000000000003', 'worker', 'worker@cutting.local', 'worker123', 'Worker', '2026-02-23T00:00:00.000Z')
+    ON CONFLICT DO NOTHING;
+  `,
+  `
     CREATE TABLE IF NOT EXISTS inventory (
       id SERIAL PRIMARY KEY,
       inventory_class TEXT NOT NULL DEFAULT 'Komarnici' CHECK (inventory_class IN ('Komarnici', 'Prozorske daske')),

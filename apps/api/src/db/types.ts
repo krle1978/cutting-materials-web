@@ -1,4 +1,4 @@
-import type { AccountRole, InventoryClass, InventoryItem, PlanParams } from "@cutting/contracts";
+import type { AccountRole, InventoryClass, InventoryItem, PlanParams, UserAccount } from "@cutting/contracts";
 import type { CutPlanResult, OrderLineMm } from "@cutting/cutting-core";
 
 export type PlanState = "PLANNED" | "COMMITTED" | "EXPIRED";
@@ -46,8 +46,17 @@ export type OrderQueueItem = {
   acceptedPlanIds: string[];
 };
 
+export type CreateAccountInput = {
+  username: string;
+  email: string;
+  password: string;
+  role: Extract<AccountRole, "Worker" | "Customer">;
+};
+
 export interface PlanStore {
   migrate(): Promise<void>;
+  listAccounts(): Promise<UserAccount[]>;
+  createAccount(input: CreateAccountInput): Promise<UserAccount>;
   listInventory(): Promise<InventoryItem[]>;
   addInventory(lengthMm: number, qty: number, inventoryClass: InventoryClass): Promise<void>;
   createPlan(input: CreatePlanInput): Promise<{ planId: string }>;

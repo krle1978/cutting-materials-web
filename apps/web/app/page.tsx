@@ -6,15 +6,14 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import {
   ACCOUNTS_STORAGE_KEY,
   CURRENT_ACCOUNT_STORAGE_KEY,
-  DEFAULT_ACCOUNTS,
   NOTIFICATIONS_STORAGE_KEY,
   type AccountRole,
   type UserAccount,
   isUserAccount,
-  mergeWithDefaultAccounts,
   normalizeIdentity,
   resolveCurrentAccount
 } from "./lib/account-store";
+import { resolveApiBaseUrl } from "./lib/api";
 import {
   getInstallationStartDateText,
   isWorkerJobRequest,
@@ -162,19 +161,6 @@ function resolveAcceptedAtDate(order: PersistedOrder): Date {
     return new Date();
   }
   return parsed;
-}
-
-function resolveApiBaseUrl(): string | null {
-  const configured = process.env.NEXT_PUBLIC_API_URL?.trim();
-  if (configured) {
-    return configured.replace(/\/+$/, "");
-  }
-
-  if (process.env.NODE_ENV === "production") {
-    return null;
-  }
-
-  return "http://localhost:4000";
 }
 
 export default function HomePage() {
@@ -342,21 +328,36 @@ export default function HomePage() {
     setOrders(data.items ?? []);
   }, [fetchApi]);
 
+  const loadAccounts = useCallback(async () => {
+    const response = await fetchApi("/accounts");
+    if (!response.ok) {
+      throw new Error(`Accounts fetch failed (${response.status})`);
+    }
+    const data = (await response.json()) as { items?: UserAccount[] };
+    const items = Array.isArray(data.items) ? data.items.filter(isUserAccount) : [];
+    setAccounts(items);
+    if (typeof window !== "undefined") {
+      const storedCurrentAccountId = window.localStorage.getItem(CURRENT_ACCOUNT_STORAGE_KEY);
+      setCurrentAccount(resolveCurrentAccount(storedCurrentAccountId, items));
+      window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(items));
+    }
+  }, [fetchApi]);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
 
-    try {
+    const restoreCachedAccounts = () => {
       const raw = window.localStorage.getItem(ACCOUNTS_STORAGE_KEY);
       const parsed = raw ? (JSON.parse(raw) as unknown) : [];
       const storedAccounts = Array.isArray(parsed) ? parsed.filter(isUserAccount) : [];
-      const mergedAccounts = mergeWithDefaultAccounts(storedAccounts);
       const storedCurrentAccountId = window.localStorage.getItem(CURRENT_ACCOUNT_STORAGE_KEY);
-      setAccounts(mergedAccounts);
-      setCurrentAccount(resolveCurrentAccount(storedCurrentAccountId, mergedAccounts));
-      window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(mergedAccounts));
+      setAccounts(storedAccounts);
+      setCurrentAccount(resolveCurrentAccount(storedCurrentAccountId, storedAccounts));
+    };
 
+    try {
       const rawNotifications = window.localStorage.getItem(NOTIFICATIONS_STORAGE_KEY);
       const parsedNotifications = rawNotifications ? (JSON.parse(rawNotifications) as unknown) : [];
       const storedNotifications = Array.isArray(parsedNotifications)
@@ -371,16 +372,21 @@ export default function HomePage() {
         : [];
       setWorkerJobRequests(storedWorkerRequests);
     } catch {
-      setAccounts(DEFAULT_ACCOUNTS);
-      window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(DEFAULT_ACCOUNTS));
+      restoreCachedAccounts();
       setNotifications([]);
       window.localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, JSON.stringify([]));
       setWorkerJobRequests([]);
       window.localStorage.setItem(WORKER_JOB_REQUESTS_STORAGE_KEY, JSON.stringify([]));
-    } finally {
-      setAuthReady(true);
     }
-  }, []);
+
+    loadAccounts()
+      .catch(() => {
+        restoreCachedAccounts();
+      })
+      .finally(() => {
+        setAuthReady(true);
+      });
+  }, [loadAccounts]);
 
   useEffect(() => {
     if (!authReady || typeof window === "undefined") {
@@ -1108,7 +1114,7 @@ export default function HomePage() {
     reloadPage();
   }
 
-  function onSignupSubmit(event: FormEvent<HTMLFormElement>) {
+  async function onSignupSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const username = signupUsername.trim();
     const email = signupEmail.trim();
@@ -1142,35 +1148,47 @@ export default function HomePage() {
       return;
     }
 
-    const newAccount: UserAccount = {
-      id:
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${signupRole.toLowerCase()}-${Date.now()}`,
-      username,
-      email,
-      password,
-      role: signupRole,
-      createdAt: new Date().toISOString()
-    };
-
-    const nextAccounts = [...accounts, newAccount];
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(nextAccounts));
-      window.localStorage.setItem(CURRENT_ACCOUNT_STORAGE_KEY, newAccount.id);
-    }
-    setAccounts(nextAccounts);
-    setCurrentAccount(newAccount);
-    resetOrderPlanDraft();
-    setMainTab("OrderPlan");
-    setInventoryPanelTab(getDefaultInventoryPanelTab(newAccount.role));
+    setBusy(true);
     setAuthError(null);
-    setAuthInfo(`${signupRole} nalog je uspesno kreiran.`);
-    setSignupUsername("");
-    setSignupEmail("");
-    setSignupPassword("");
-    setSignupRole("Worker");
-    reloadPage();
+
+    try {
+      const response = await fetchApi("/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          email,
+          password,
+          role: signupRole
+        })
+      });
+
+      const data = (await response.json()) as { error?: string; account?: UserAccount; items?: UserAccount[] };
+      if (!response.ok || !data.account) {
+        throw new Error(data.error ?? `Account create failed (${response.status})`);
+      }
+
+      const nextAccounts = Array.isArray(data.items) ? data.items.filter(isUserAccount) : [...accounts, data.account];
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(nextAccounts));
+        window.localStorage.setItem(CURRENT_ACCOUNT_STORAGE_KEY, data.account.id);
+      }
+      setAccounts(nextAccounts);
+      setCurrentAccount(data.account);
+      resetOrderPlanDraft();
+      setMainTab("OrderPlan");
+      setInventoryPanelTab(getDefaultInventoryPanelTab(data.account.role));
+      setAuthInfo(`${signupRole} nalog je uspesno kreiran.`);
+      setSignupUsername("");
+      setSignupEmail("");
+      setSignupPassword("");
+      setSignupRole("Worker");
+      reloadPage();
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Unexpected error");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function onLogout() {

@@ -1,5 +1,6 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
+import { registerAccountsRoutes } from "./routes/accounts";
 import { registerInventoryRoutes } from "./routes/inventory";
 import { registerOrdersRoutes } from "./routes/orders";
 import type { PlanStore } from "./db/types";
@@ -29,6 +30,7 @@ export async function buildApp(options: BuildAppOptions) {
   });
 
   app.get("/materials", async () => ({ ok: true }));
+  await registerAccountsRoutes(app, { store: options.store });
   await registerInventoryRoutes(app, { store: options.store });
   await registerOrdersRoutes(app, { store: options.store });
 

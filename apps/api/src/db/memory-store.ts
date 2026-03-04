@@ -2,11 +2,12 @@ import { randomUUID } from "crypto";
 import { existsSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, resolve } from "path";
-import type { AccountRole, InventoryClass, InventoryItem } from "@cutting/contracts";
+import type { AccountRole, InventoryClass, InventoryItem, UserAccount } from "@cutting/contracts";
 import type { Allocation } from "@cutting/cutting-core";
 import { ConflictError, NotFoundError } from "../utils/errors";
 import type {
   CommitPlanResult,
+  CreateAccountInput,
   CreateOrderInput,
   CreatePlanInput,
   OrderQueueItem,
@@ -28,8 +29,42 @@ const DEFAULT_INVENTORY: Array<{ inventoryClass: InventoryClass; lengthMm: numbe
   { inventoryClass: "Prozorske daske", lengthMm: 20000, qty: 15 }
 ];
 const DEFAULT_INVENTORY_CLASS: InventoryClass = "Komarnici";
+const DEFAULT_ACCOUNTS: UserAccount[] = [
+  {
+    id: "seed-owner",
+    username: "owner",
+    email: "owner@cutting.local",
+    password: "owner123",
+    role: "Owner",
+    createdAt: "2026-02-23T00:00:00.000Z"
+  },
+  {
+    id: "seed-lager",
+    username: "lager",
+    email: "lager@cutting.local",
+    password: "lager123",
+    role: "Lager",
+    createdAt: "2026-02-23T00:00:00.000Z"
+  },
+  {
+    id: "seed-worker",
+    username: "worker",
+    email: "worker@cutting.local",
+    password: "worker123",
+    role: "Worker",
+    createdAt: "2026-02-23T00:00:00.000Z"
+  }
+];
 
 type PersistedMemoryState = {
+  accounts?: Array<{
+    id?: unknown;
+    username?: unknown;
+    email?: unknown;
+    password?: unknown;
+    role?: unknown;
+    createdAt?: unknown;
+  }>;
   inventory: Array<{
     id: number;
     inventoryClass?: unknown;
@@ -57,6 +92,7 @@ type PersistedMemoryState = {
 };
 
 export class MemoryStore implements PlanStore {
+  private accounts = new Map<string, UserAccount>();
   private inventoryById = new Map<number, InventoryItem>();
   private inventoryKeyIndex = new Map<string, number>();
   private plans = new Map<string, MemoryPlan>();
@@ -67,16 +103,57 @@ export class MemoryStore implements PlanStore {
   async migrate(): Promise<void> {
     await this.loadPersistedState();
 
+    this.ensureDefaultAccounts();
+
     if (this.inventoryById.size === 0) {
       for (const item of DEFAULT_INVENTORY) {
         await this.addInventoryInternal(item.lengthMm, item.qty, item.inventoryClass, false);
       }
-      await this.persistState();
     }
+
+    await this.persistState();
   }
 
   async close(): Promise<void> {
     return Promise.resolve();
+  }
+
+  async listAccounts(): Promise<UserAccount[]> {
+    this.ensureDefaultAccounts();
+    return [...this.accounts.values()]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.username.localeCompare(b.username))
+      .map(cloneAccount);
+  }
+
+  async createAccount(input: CreateAccountInput): Promise<UserAccount> {
+    this.ensureDefaultAccounts();
+
+    const username = normalizeAccountUsername(input.username);
+    const email = normalizeAccountEmail(input.email);
+    const password = normalizeAccountPassword(input.password);
+    const role = normalizeCreatableAccountRole(input.role);
+
+    const alreadyExists = [...this.accounts.values()].some(
+      (account) =>
+        account.username.trim().toLowerCase() === username.trim().toLowerCase() ||
+        account.email.trim().toLowerCase() === email.trim().toLowerCase()
+    );
+    if (alreadyExists) {
+      throw new ConflictError("Username ili email vec postoji.");
+    }
+
+    const account: UserAccount = {
+      id: randomUUID(),
+      username,
+      email,
+      password,
+      role,
+      createdAt: new Date().toISOString()
+    };
+
+    this.accounts.set(account.id, account);
+    await this.persistState();
+    return cloneAccount(account);
   }
 
   async listInventory(): Promise<InventoryItem[]> {
@@ -267,6 +344,26 @@ export class MemoryStore implements PlanStore {
     }
   }
 
+  private ensureDefaultAccounts(): void {
+    if (this.accounts.size === 0) {
+      for (const account of DEFAULT_ACCOUNTS) {
+        this.accounts.set(account.id, cloneAccount(account));
+      }
+      return;
+    }
+
+    for (const defaultAccount of DEFAULT_ACCOUNTS) {
+      const exists = [...this.accounts.values()].some(
+        (account) =>
+          account.username.trim().toLowerCase() === defaultAccount.username.toLowerCase() ||
+          account.email.trim().toLowerCase() === defaultAccount.email.toLowerCase()
+      );
+      if (!exists) {
+        this.accounts.set(defaultAccount.id, cloneAccount(defaultAccount));
+      }
+    }
+  }
+
   private async loadPersistedState(): Promise<void> {
     if (!existsSync(this.stateFilePath)) {
       return;
@@ -275,9 +372,23 @@ export class MemoryStore implements PlanStore {
     const raw = await readFile(this.stateFilePath, "utf8");
     const parsed = JSON.parse(raw) as PersistedMemoryState;
 
+    this.accounts.clear();
     this.inventoryById.clear();
     this.inventoryKeyIndex.clear();
     this.orders.clear();
+
+    for (const item of parsed.accounts ?? []) {
+      if (typeof item.id !== "string" || item.id.length === 0) {
+        continue;
+      }
+
+      const account = normalizeStoredAccount(item);
+      if (!account) {
+        continue;
+      }
+
+      this.accounts.set(account.id, account);
+    }
 
     let maxId = 0;
     for (const item of parsed.inventory ?? []) {
@@ -339,6 +450,7 @@ export class MemoryStore implements PlanStore {
 
   private async persistState(): Promise<void> {
     const state: PersistedMemoryState = {
+      accounts: [...this.accounts.values()],
       inventory: [...this.inventoryById.values()],
       orders: [...this.orders.values()],
       nextInventoryId: this.nextInventoryId
@@ -449,6 +561,72 @@ function cloneOrder(order: OrderQueueItem): OrderQueueItem {
     ...order,
     acceptedPlanIds: [...order.acceptedPlanIds]
   };
+}
+
+function cloneAccount(account: UserAccount): UserAccount {
+  return { ...account };
+}
+
+function normalizeStoredAccount(value: {
+  id?: unknown;
+  username?: unknown;
+  email?: unknown;
+  password?: unknown;
+  role?: unknown;
+  createdAt?: unknown;
+}): UserAccount | null {
+  if (
+    typeof value.username !== "string" ||
+    typeof value.email !== "string" ||
+    typeof value.password !== "string" ||
+    typeof value.createdAt !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    id: value.id as string,
+    username: normalizeAccountUsername(value.username),
+    email: normalizeAccountEmail(value.email),
+    password: normalizeAccountPassword(value.password),
+    role: normalizeAccountRole(value.role),
+    createdAt: value.createdAt
+  };
+}
+
+function normalizeAccountUsername(value: unknown): string {
+  if (typeof value !== "string") {
+    return "unknown";
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : "unknown";
+}
+
+function normalizeAccountEmail(value: unknown): string {
+  if (typeof value !== "string") {
+    return "unknown@local.invalid";
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : "unknown@local.invalid";
+}
+
+function normalizeAccountPassword(value: unknown): string {
+  if (typeof value !== "string") {
+    return "pass";
+  }
+  const normalized = value.trim();
+  return normalized.length >= 4 ? normalized : "pass";
+}
+
+function normalizeCreatableAccountRole(value: unknown): Extract<AccountRole, "Worker" | "Customer"> {
+  return value === "Customer" ? "Customer" : "Worker";
+}
+
+function normalizeAccountRole(value: unknown): AccountRole {
+  if (value === "Owner" || value === "Lager" || value === "Worker" || value === "Customer") {
+    return value;
+  }
+  return "Worker";
 }
 
 function resolveMemoryStateFilePath(): string {

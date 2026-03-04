@@ -3,15 +3,13 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
-  ACCOUNTS_STORAGE_KEY,
   CURRENT_ACCOUNT_STORAGE_KEY,
-  DEFAULT_ACCOUNTS,
   formatAccountCreatedAt,
   isUserAccount,
-  mergeWithDefaultAccounts,
   resolveCurrentAccount,
   type UserAccount
 } from "../../lib/account-store";
+import { resolveApiBaseUrl } from "../../lib/api";
 
 function sortByCreatedAt(accounts: UserAccount[]): UserAccount[] {
   return [...accounts].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
@@ -21,28 +19,39 @@ export default function AccountManagerPage() {
   const [accounts, setAccounts] = useState<UserAccount[]>([]);
   const [currentAccount, setCurrentAccount] = useState<UserAccount | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const apiUrl = useMemo(resolveApiBaseUrl, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
 
-    try {
-      const rawAccounts = window.localStorage.getItem(ACCOUNTS_STORAGE_KEY);
-      const parsedAccounts = rawAccounts ? (JSON.parse(rawAccounts) as unknown) : [];
-      const storedAccounts = Array.isArray(parsedAccounts) ? parsedAccounts.filter(isUserAccount) : [];
-      const mergedAccounts = mergeWithDefaultAccounts(storedAccounts);
-      const currentAccountId = window.localStorage.getItem(CURRENT_ACCOUNT_STORAGE_KEY);
-
-      setAccounts(mergedAccounts);
-      setCurrentAccount(resolveCurrentAccount(currentAccountId, mergedAccounts));
-    } catch {
-      setAccounts(DEFAULT_ACCOUNTS);
-      setCurrentAccount(null);
-    } finally {
+    if (!apiUrl) {
       setAuthReady(true);
+      return;
     }
-  }, []);
+
+    fetch(`${apiUrl}/accounts`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Accounts fetch failed (${response.status})`);
+        }
+        return (await response.json()) as { items?: UserAccount[] };
+      })
+      .then((data) => {
+        const items = Array.isArray(data.items) ? data.items.filter(isUserAccount) : [];
+        const currentAccountId = window.localStorage.getItem(CURRENT_ACCOUNT_STORAGE_KEY);
+        setAccounts(items);
+        setCurrentAccount(resolveCurrentAccount(currentAccountId, items));
+      })
+      .catch(() => {
+        setAccounts([]);
+        setCurrentAccount(null);
+      })
+      .finally(() => {
+        setAuthReady(true);
+      });
+  }, [apiUrl]);
 
   const workerAccounts = useMemo(() => sortByCreatedAt(accounts.filter((account) => account.role === "Worker")), [accounts]);
   const customerAccounts = useMemo(

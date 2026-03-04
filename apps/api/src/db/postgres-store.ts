@@ -1,11 +1,12 @@
 import { randomUUID } from "crypto";
 import { Pool } from "pg";
-import type { AccountRole, InventoryClass, InventoryItem } from "@cutting/contracts";
+import type { AccountRole, InventoryClass, InventoryItem, UserAccount } from "@cutting/contracts";
 import type { Allocation, CutPlanResult } from "@cutting/cutting-core";
 import { ConflictError, NotFoundError } from "../utils/errors";
 import { migrationStatements } from "./sql";
 import type {
   CommitPlanResult,
+  CreateAccountInput,
   CreateOrderInput,
   CreatePlanInput,
   OrderQueueItem,
@@ -27,6 +28,41 @@ export class PostgresStore implements PlanStore {
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  async listAccounts(): Promise<UserAccount[]> {
+    const { rows } = await this.pool.query<AccountRow>(`
+      SELECT id, username, email, password, role, created_at
+      FROM accounts
+      ORDER BY created_at ASC, username ASC
+    `);
+
+    return rows.map(mapAccountRow);
+  }
+
+  async createAccount(input: CreateAccountInput): Promise<UserAccount> {
+    const accountId = randomUUID();
+    try {
+      const { rows } = await this.pool.query<AccountRow>(
+        `
+          INSERT INTO accounts (id, username, email, password, role)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id, username, email, password, role, created_at
+        `,
+        [accountId, input.username.trim(), input.email.trim().toLowerCase(), input.password.trim(), input.role]
+      );
+      return mapAccountRow(rows[0]);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error as { code?: string }).code === "23505"
+      ) {
+        throw new ConflictError("Username ili email vec postoji.");
+      }
+      throw error;
+    }
   }
 
   async listInventory(): Promise<InventoryItem[]> {
@@ -337,6 +373,15 @@ type OrderRow = {
   accepted_plan_ids: unknown;
 };
 
+type AccountRow = {
+  id: string;
+  username: string;
+  email: string;
+  password: string;
+  role: AccountRole;
+  created_at: Date | string;
+};
+
 function summarizeConsumption(allocations: Allocation[]): Map<number, number> {
   const map = new Map<number, number>();
   for (const allocation of allocations) {
@@ -398,6 +443,17 @@ function mapOrderRow(row: OrderRow): OrderQueueItem {
     acceptedPlanIds: Array.isArray(row.accepted_plan_ids)
       ? row.accepted_plan_ids.filter((x): x is string => typeof x === "string")
       : []
+  };
+}
+
+function mapAccountRow(row: AccountRow): UserAccount {
+  return {
+    id: row.id,
+    username: row.username,
+    email: row.email,
+    password: row.password,
+    role: row.role,
+    createdAt: toIsoString(row.created_at)
   };
 }
 
